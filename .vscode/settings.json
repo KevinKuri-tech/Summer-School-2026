@@ -1,0 +1,12 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+  // Repo root on sys.path for the Run button and any manually opened terminal.
+  // The project is not installed into the venv by design, so without this
+  // `from studyplan import ...` fails for files run from inside studyplan/.
+  "terminal.integrated.env.windows": { "PYTHONPATH": "${workspaceFolder}" },
+  "python.terminal.executeInFileDir": false,
+  // Same resolution for Pylance, so the editor does not flag the imports.
+  "python.analysis.extraPaths": ["${workspaceFolder}"],
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false
+}

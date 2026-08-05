@@ -1,0 +1,40 @@
+{
+  // The project is intentionally not installed into the venv (pyproject.toml:
+  // [tool.uv] package = false), so `from studyplan import ...` only resolves
+  // when the repo root is on sys.path. Running a file inside studyplan/ puts
+  // that subdirectory on sys.path instead, hence PYTHONPATH below.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder}" },
+      "justMyCode": true
+    },
+    {
+      "name": "Streamlit: app.py",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "streamlit",
+      "args": ["run", "app.py"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder}" },
+      "justMyCode": true
+    },
+    {
+      "name": "Eval harness",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/eval/run_eval.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder}" },
+      "justMyCode": true
+    }
+  ]
+}

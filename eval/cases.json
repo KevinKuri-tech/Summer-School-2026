@@ -1,0 +1,186 @@
+[
+  {
+    "id": "c01_baseline_three_modules",
+    "note": "Happy path, comfortable capacity.",
+    "mode": "generate",
+    "horizon_days": 14,
+    "hours": [2, 2, 2, 2, 2, 4, 3],
+    "modules": [
+      {"name": "Statistics", "exam_in_days": 12, "difficulty": 4, "confidence": 2, "estimated_hours": 14},
+      {"name": "Microeconomics", "exam_in_days": 9, "difficulty": 3, "confidence": 3, "estimated_hours": 9},
+      {"name": "Databases", "exam_in_days": 14, "difficulty": 3, "confidence": 4, "estimated_hours": 7}
+    ]
+  },
+  {
+    "id": "c02_six_modules",
+    "note": "Upper bound on module count.",
+    "mode": "generate",
+    "horizon_days": 14,
+    "hours": [3, 3, 3, 3, 3, 5, 5],
+    "modules": [
+      {"name": "Analysis I", "exam_in_days": 6, "difficulty": 5, "confidence": 2, "estimated_hours": 12},
+      {"name": "Linear Algebra", "exam_in_days": 8, "difficulty": 4, "confidence": 3, "estimated_hours": 9},
+      {"name": "Physics", "exam_in_days": 10, "difficulty": 4, "confidence": 2, "estimated_hours": 10},
+      {"name": "Programming", "exam_in_days": 11, "difficulty": 2, "confidence": 4, "estimated_hours": 5},
+      {"name": "Ethics", "exam_in_days": 13, "difficulty": 2, "confidence": 4, "estimated_hours": 4},
+      {"name": "Chemistry", "exam_in_days": 14, "difficulty": 3, "confidence": 3, "estimated_hours": 8}
+    ]
+  },
+  {
+    "id": "c03_exam_in_two_days",
+    "note": "Very tight deadline, must front-load and still leave revision.",
+    "mode": "generate",
+    "horizon_days": 10,
+    "hours": [3, 3, 3, 3, 3, 3, 3],
+    "modules": [
+      {"name": "Pharmacology", "exam_in_days": 2, "difficulty": 5, "confidence": 1, "estimated_hours": 8},
+      {"name": "Anatomy", "exam_in_days": 9, "difficulty": 4, "confidence": 3, "estimated_hours": 10}
+    ]
+  },
+  {
+    "id": "c04_zero_weekend",
+    "note": "No weekend availability at all.",
+    "mode": "generate",
+    "horizon_days": 14,
+    "hours": [3, 3, 3, 3, 3, 0, 0],
+    "modules": [
+      {"name": "Accounting", "exam_in_days": 11, "difficulty": 3, "confidence": 2, "estimated_hours": 12},
+      {"name": "Business Law", "exam_in_days": 13, "difficulty": 2, "confidence": 3, "estimated_hours": 6}
+    ]
+  },
+  {
+    "id": "c05_blackout_streak",
+    "note": "Four consecutive blackout days mid-plan.",
+    "mode": "generate",
+    "horizon_days": 14,
+    "hours": [2.5, 2.5, 2.5, 2.5, 2.5, 3, 3],
+    "blackout_offsets": [4, 5, 6, 7],
+    "modules": [
+      {"name": "Signals", "exam_in_days": 12, "difficulty": 4, "confidence": 2, "estimated_hours": 11},
+      {"name": "Control Theory", "exam_in_days": 14, "difficulty": 5, "confidence": 2, "estimated_hours": 12}
+    ]
+  },
+  {
+    "id": "c06_overloaded",
+    "note": "Infeasible workload. Must cut and flag it, not fake capacity.",
+    "mode": "generate",
+    "horizon_days": 10,
+    "hours": [1, 1, 1, 1, 1, 2, 2],
+    "modules": [
+      {"name": "Organic Chemistry", "exam_in_days": 7, "difficulty": 5, "confidence": 1, "estimated_hours": 30},
+      {"name": "Biochemistry", "exam_in_days": 10, "difficulty": 5, "confidence": 1, "estimated_hours": 25}
+    ]
+  },
+  {
+    "id": "c07_same_day_exams",
+    "note": "Two exams on the same day.",
+    "mode": "generate",
+    "horizon_days": 12,
+    "hours": [2, 2, 2, 2, 2, 4, 4],
+    "modules": [
+      {"name": "Marketing", "exam_in_days": 10, "difficulty": 3, "confidence": 3, "estimated_hours": 8},
+      {"name": "Finance", "exam_in_days": 10, "difficulty": 4, "confidence": 2, "estimated_hours": 11},
+      {"name": "Operations", "exam_in_days": 12, "difficulty": 3, "confidence": 3, "estimated_hours": 7}
+    ]
+  },
+  {
+    "id": "c08_short_sessions",
+    "note": "25 to 45 minute sessions only.",
+    "mode": "generate",
+    "horizon_days": 12,
+    "hours": [2, 2, 2, 2, 2, 2, 2],
+    "min_session": 25,
+    "max_session": 45,
+    "modules": [
+      {"name": "Latin", "exam_in_days": 9, "difficulty": 3, "confidence": 2, "estimated_hours": 8},
+      {"name": "History", "exam_in_days": 12, "difficulty": 2, "confidence": 3, "estimated_hours": 6}
+    ]
+  },
+  {
+    "id": "c09_long_sessions",
+    "note": "Long blocks, few per day.",
+    "mode": "generate",
+    "horizon_days": 14,
+    "hours": [4, 0, 4, 0, 4, 6, 0],
+    "min_session": 60,
+    "max_session": 180,
+    "modules": [
+      {"name": "Thermodynamics", "exam_in_days": 13, "difficulty": 5, "confidence": 2, "estimated_hours": 18},
+      {"name": "Materials", "exam_in_days": 14, "difficulty": 3, "confidence": 3, "estimated_hours": 8}
+    ]
+  },
+  {
+    "id": "c10_low_confidence_easy_module",
+    "note": "Easy module the student feels bad about vs hard module they know.",
+    "mode": "generate",
+    "horizon_days": 12,
+    "hours": [2, 2, 2, 2, 2, 3, 3],
+    "modules": [
+      {"name": "Public Speaking", "exam_in_days": 11, "difficulty": 2, "confidence": 1, "estimated_hours": 7},
+      {"name": "Algorithms", "exam_in_days": 12, "difficulty": 5, "confidence": 5, "estimated_hours": 6}
+    ]
+  },
+  {
+    "id": "c11_first_exam_tomorrow_plus_late",
+    "note": "One exam tomorrow, one at the end of the horizon.",
+    "mode": "generate",
+    "horizon_days": 14,
+    "hours": [2, 2, 2, 2, 2, 2, 2],
+    "modules": [
+      {"name": "Spanish Oral", "exam_in_days": 1, "difficulty": 3, "confidence": 3, "estimated_hours": 3},
+      {"name": "Econometrics", "exam_in_days": 14, "difficulty": 5, "confidence": 2, "estimated_hours": 16}
+    ]
+  },
+  {
+    "id": "c12_minimum_horizon",
+    "note": "10 day horizon, three modules.",
+    "mode": "generate",
+    "horizon_days": 10,
+    "hours": [1.5, 1.5, 1.5, 1.5, 1.5, 5, 5],
+    "modules": [
+      {"name": "Immunology", "exam_in_days": 5, "difficulty": 4, "confidence": 2, "estimated_hours": 8},
+      {"name": "Genetics", "exam_in_days": 8, "difficulty": 4, "confidence": 3, "estimated_hours": 8},
+      {"name": "Statistics for Biology", "exam_in_days": 10, "difficulty": 3, "confidence": 2, "estimated_hours": 6}
+    ]
+  },
+  {
+    "id": "c13_replan_two_missed",
+    "note": "Replan after two missed blocks on day 1.",
+    "mode": "replan",
+    "replan_day_offset": 2,
+    "miss_first_n": 2,
+    "horizon_days": 14,
+    "hours": [2, 2, 2, 2, 2, 4, 3],
+    "modules": [
+      {"name": "Statistics", "exam_in_days": 12, "difficulty": 4, "confidence": 2, "estimated_hours": 14},
+      {"name": "Microeconomics", "exam_in_days": 9, "difficulty": 3, "confidence": 3, "estimated_hours": 9},
+      {"name": "Databases", "exam_in_days": 14, "difficulty": 3, "confidence": 4, "estimated_hours": 7}
+    ]
+  },
+  {
+    "id": "c14_replan_whole_week_missed",
+    "note": "Student misses five blocks. Recovery must not exceed capacity.",
+    "mode": "replan",
+    "replan_day_offset": 4,
+    "miss_first_n": 5,
+    "horizon_days": 14,
+    "hours": [2, 2, 2, 2, 2, 3, 3],
+    "modules": [
+      {"name": "Neuroscience", "exam_in_days": 11, "difficulty": 5, "confidence": 2, "estimated_hours": 14},
+      {"name": "Psychology Methods", "exam_in_days": 13, "difficulty": 3, "confidence": 3, "estimated_hours": 8}
+    ]
+  },
+  {
+    "id": "c15_replan_close_to_exam",
+    "note": "Missed work two days before the exam, recovery is partly impossible.",
+    "mode": "replan",
+    "replan_day_offset": 6,
+    "miss_first_n": 4,
+    "horizon_days": 12,
+    "hours": [2, 2, 2, 2, 2, 2, 2],
+    "modules": [
+      {"name": "Corporate Finance", "exam_in_days": 8, "difficulty": 5, "confidence": 2, "estimated_hours": 13},
+      {"name": "Taxation", "exam_in_days": 12, "difficulty": 4, "confidence": 2, "estimated_hours": 9}
+    ]
+  }
+]

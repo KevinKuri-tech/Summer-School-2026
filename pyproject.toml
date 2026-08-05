@@ -1,0 +1,29 @@
+[project]
+name = "study-plan-optimizer"
+version = "0.1.0"
+description = "AI study-plan optimizer: exam data + availability -> schema-valid 10-14 day study plan with replanning"
+requires-python = ">=3.11"
+dependencies = [
+    "streamlit>=1.50",
+    "anthropic>=0.40",
+    "pydantic>=2.7",
+    # Streamlit declares starlette<2,>=0.46.0, but its gzip middleware calls
+    # GZipResponder(...) without the thread_minimum_size argument that starlette
+    # 1.4.0 made required. Every gzip-accepting request (i.e. every browser) then
+    # 500s. Pin below 1.4 until Streamlit passes the argument.
+    "starlette<1.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# package = false means the project is never installed into the venv, so the
+# repo root has to be on sys.path for `from studyplan import ...` to resolve.
+pythonpath = ["."]
