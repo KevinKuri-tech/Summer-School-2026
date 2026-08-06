@@ -25,7 +25,25 @@ from studyplan.schema import Availability, Module, PlanRequest, StudyBlock, Stud
 
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-st.set_page_config(page_title="Study-Plan Optimizer", page_icon="📅", layout="wide")
+APP_NAME = "Nexora Study"
+LOGO = Path(__file__).resolve().parent / "media" / "pictures" / "Logo.png"
+
+st.set_page_config(page_title=APP_NAME, page_icon=str(LOGO) if LOGO.exists() else "📅",
+                   layout="wide")
+
+# Top-left app chrome (above the sidebar), plus a header in the main area so the
+# name sits next to the mark on every tab.
+if LOGO.exists():
+    st.logo(str(LOGO), size="large")
+
+_logo_col, _title_col = st.columns([1, 4], vertical_alignment="center")
+with _logo_col:
+    if LOGO.exists():
+        # The file carries generous whitespace margins, so the mark renders a
+        # good deal smaller than the box it sits in.
+        st.image(str(LOGO), width=240)
+with _title_col:
+    st.title(APP_NAME, anchor=False)
 
 
 # --------------------------------------------------------------------------
