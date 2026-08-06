@@ -21,8 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import httpx  # noqa: E402
 
 from studyplan import load_dotenv  # noqa: E402  (import also triggers the .env read)
-from studyplan.planner import (DEFAULT_MODEL, DEFAULT_OPENROUTER_MODEL,  # noqa: E402
-                               active_backend)
+from studyplan.planner import active_backend, default_model_for  # noqa: E402
 
 OK, BAD, WARN = "[ok]", "[FAIL]", "[warn]"
 
@@ -60,8 +59,8 @@ def check_env() -> tuple[str, str]:
 
     var = "OPENROUTER_API_KEY" if backend == "openrouter" else "ANTHROPIC_API_KEY"
     key = os.environ[var].strip().strip('"').strip("'")
-    model = os.environ.get("STUDYPLAN_MODEL") or (
-        DEFAULT_OPENROUTER_MODEL if backend == "openrouter" else DEFAULT_MODEL)
+    # Per backend: a shared override would send an OpenRouter slug to Anthropic.
+    model = default_model_for(backend)
 
     print(f"   {OK} Backend: {backend}")
     print(f"   {OK} {var}: {mask(key)}")

@@ -19,8 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import streamlit as st
 
 from studyplan import exporting, planner as planner_mod, rules
-from studyplan.planner import (DEFAULT_MODEL, DEFAULT_OPENROUTER_MODEL, OPENROUTER_PRESETS,
-                               MockPlanner, PlannerError, active_backend, is_free_model)
+from studyplan.planner import (ANTHROPIC_PRESETS, DEFAULT_MODEL, DEFAULT_OPENROUTER_MODEL,
+                               OPENROUTER_PRESETS, MockPlanner, PlannerError,
+                               available_backends, is_free_model)
 from studyplan.schema import Availability, Module, PlanRequest, StudyBlock, StudyPlan
 
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -78,6 +79,7 @@ def get_planner():
     return planner_mod.get_planner(
         force_mock=st.session_state.get("force_mock", False),
         model=st.session_state.get("model") or None,
+        backend=st.session_state.get("backend"),
     )
 
 
@@ -272,23 +274,65 @@ def call_with_panel(call_slot, status_slot, planner, payload, spinner_text,
 # --------------------------------------------------------------------------
 # sidebar
 # --------------------------------------------------------------------------
+BACKEND_NAME = {"anthropic": "Anthropic API", "openrouter": "OpenRouter",
+                "mock": "Rule-based baseline (no API call)"}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def anthropic_model_options() -> list[tuple[str, str]]:
+    """(id, label) for every model the key may call. Empty if unreachable.
+
+    Cached because it is a network round trip and Streamlit reruns the whole
+    script on every widget interaction.
+    """
+    try:
+        return [(m.id, m.label) for m in planner_mod.list_anthropic_models()]
+    except PlannerError:
+        return []
+
+
 with st.sidebar:
     st.subheader("Engine")
-    backend = active_backend()
-    label = {"anthropic": "Anthropic API", "openrouter": "OpenRouter",
-             "mock": "No API key, running the rule-based baseline"}[backend]
-    st.caption(label)
+    backends = available_backends()
+    # Both provider keys can be present, so the backend is a choice rather than
+    # something the environment decides for us.
+    backend = st.radio("Backend", backends, format_func=BACKEND_NAME.get,
+                       key="backend", horizontal=False)
+    label = BACKEND_NAME[backend]
 
-    if backend == "openrouter":
+    if backend == "anthropic":
+        options = anthropic_model_options()
+        if options:
+            ids = [i for i, _ in options]
+            labels = dict(options)
+            default = DEFAULT_MODEL if DEFAULT_MODEL in ids else ids[0]
+            st.session_state["model"] = st.selectbox(
+                "Model", ids, index=ids.index(default),
+                format_func=lambda i: labels[i], key="anthropic_model")
+            c1, c2 = st.columns([3, 1], vertical_alignment="center")
+            c1.caption(f"{len(ids)} models available to this key.")
+            if c2.button("↻", help="Re-query the Anthropic models list"):
+                anthropic_model_options.clear()
+                st.rerun()
+        else:
+            st.session_state["model"] = st.selectbox(
+                "Model", ANTHROPIC_PRESETS, key="anthropic_model")
+            st.caption("Could not reach the models endpoint, so this is the "
+                       "built-in list rather than what the key can call.")
+        st.caption("Only models that support structured outputs are listed: the "
+                   "planner constrains the response to the plan schema.")
+    elif backend == "openrouter":
         presets = list(dict.fromkeys(OPENROUTER_PRESETS + [DEFAULT_OPENROUTER_MODEL]))
-        choice = st.selectbox("Model", presets + ["custom..."], index=0)
-        model = st.text_input("Model slug", value=DEFAULT_OPENROUTER_MODEL) \
+        choice = st.selectbox("Model", presets + ["custom..."], index=0,
+                              key="openrouter_choice")
+        st.session_state["model"] = st.text_input(
+            "Model slug", value=DEFAULT_OPENROUTER_MODEL, key="openrouter_slug") \
             if choice == "custom..." else choice
-        st.session_state["model"] = model
         st.caption("Any OpenRouter slug works. `:free` suffix means the free tier, "
                    "which is rate limited and may train on your data.")
     else:
-        st.text_input("Model", value=DEFAULT_MODEL, key="model", disabled=backend == "mock")
+        st.session_state["model"] = None
+        st.caption("No model is contacted. The plan is computed by the greedy scheduler.")
 
     st.toggle("Force baseline planner (no API cost)", key="force_mock",
               value=backend == "mock", disabled=backend == "mock")
@@ -507,11 +551,23 @@ with tab_plan:
         elif view == "Weekly":
             rows = exporting.plan_to_rows(plan, st.session_state.status)
             st.dataframe(rows, width="stretch", hide_index=True)
+
             per_day: dict[str, float] = {}
             for r in rows:
-                per_day[f"{r['weekday']} {r['date'][5:]}"] = per_day.get(
-                    f"{r['weekday']} {r['date'][5:]}", 0) + r["duration_minutes"] / 60
-            st.bar_chart(per_day, height=200)
+                label = f"{r['weekday']} {r['date'][5:]}"
+                per_day[label] = per_day.get(label, 0) + r["duration_minutes"] / 60
+
+            st.subheader("Planned load per day")
+            st.caption("Total planned study hours per calendar day, regardless of "
+                       "completion status. Days without any block are left out entirely.")
+            # Named columns rather than a bare dict: they carry into the axis titles
+            # *and* the hover tooltip, which x_label/y_label alone would leave as
+            # "index"/"value". rows is already sorted by date, and the labels are
+            # strings, so sort=False keeps the bars chronological instead of letting
+            # Vega sort them alphabetically by weekday name.
+            st.bar_chart(
+                [{"Date": k, "Study hours": v} for k, v in per_day.items()],
+                x="Date", y="Study hours", sort=False, height=200)
 
         else:  # Edit
             st.caption("Human-in-the-loop: correct anything the model got wrong, then save. "

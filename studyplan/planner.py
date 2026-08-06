@@ -20,11 +20,21 @@ from datetime import date, datetime, timedelta
 from studyplan import prompts
 from studyplan.schema import PLAN_JSON_SCHEMA, Availability, PlanRequest, StudyPlan
 
-DEFAULT_MODEL = os.environ.get("STUDYPLAN_MODEL", "claude-sonnet-5")
+# One variable per backend. A single shared STUDYPLAN_MODEL cannot serve both:
+# with two keys in .env the OpenRouter slug wins and is then sent to Anthropic,
+# which 404s. STUDYPLAN_MODEL is still honoured for OpenRouter, where it was
+# already being used, so existing .env files keep working.
+DEFAULT_MODEL = os.environ.get("STUDYPLAN_ANTHROPIC_MODEL", "claude-sonnet-5")
 # Cheaper: claude-haiku-4-5. Stronger: claude-opus-5.
-# Structured outputs are supported on claude-opus-5, claude-sonnet-5,
-# claude-opus-4-8, claude-fable-5 and claude-haiku-4-5. claude-sonnet-4-6 is
-# not on that list, so it is not a safe default here.
+#
+# Offline fallback for the model picker. Prefer list_anthropic_models(), which
+# asks the API what this particular key may call instead of guessing; this list
+# is only what to show when that call cannot be made.
+ANTHROPIC_PRESETS = [
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5",
+]
 
 
 @dataclass
@@ -132,6 +142,85 @@ def _clean_json(text: str) -> str:
 # Anthropic planner
 # --------------------------------------------------------------------------
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
+
+
+@dataclass(frozen=True)
+class ModelInfo:
+    """One selectable model, as reported by the provider."""
+
+    id: str
+    display_name: str = ""
+    max_input_tokens: int | None = None
+    max_tokens: int | None = None
+    structured_outputs: bool = True
+
+    @property
+    def label(self) -> str:
+        return f"{self.display_name or self.id}  ·  {self.id}"
+
+
+def _capability(capabilities, name: str) -> bool | None:
+    """Whether `name` is supported, or None if the field is absent.
+
+    Current SDKs return a typed ModelCapabilities object; older ones return a
+    plain dict. Read both rather than pinning a version.
+    """
+    node = getattr(capabilities, name, None)
+    if node is None and isinstance(capabilities, dict):
+        node = capabilities.get(name)
+    if node is None:
+        return None
+    supported = getattr(node, "supported", None)
+    if supported is None and isinstance(node, dict):
+        supported = node.get("supported")
+    return supported
+
+
+def list_anthropic_models(api_key: str | None = None,
+                          structured_only: bool = True) -> list[ModelInfo]:
+    """The models this ANTHROPIC_API_KEY is actually entitled to call.
+
+    Reads GET /v1/models, so the result reflects the account rather than a
+    hardcoded guess that drifts with every release.
+
+    AnthropicPlanner pins the response to PLAN_JSON_SCHEMA through
+    output_config, which a model without structured-output support cannot
+    honour, so those are filtered out by default.
+
+    Raises PlannerError when the key is missing or the call fails; callers that
+    need a list no matter what can fall back to ANTHROPIC_PRESETS.
+    """
+    import anthropic
+
+    key = (api_key or os.environ.get("ANTHROPIC_API_KEY") or "").strip().strip('"').strip("'")
+    if not key:
+        raise PlannerError("ANTHROPIC_API_KEY is not set.")
+
+    client = anthropic.Anthropic(api_key=key)
+    try:
+        # Iterating the pager (rather than .data) follows every page.
+        raw = list(client.models.list())
+    except anthropic.AuthenticationError as exc:
+        raise PlannerError(f"API key rejected by Anthropic: {exc}") from None
+    except anthropic.APIError as exc:
+        raise PlannerError(f"Could not list Anthropic models: {exc}") from None
+
+    models = []
+    for m in raw:
+        supported = _capability(getattr(m, "capabilities", None), "structured_outputs")
+        # None means this API version does not report the capability at all.
+        # Excluding on that would empty the list, so only a hard False filters.
+        if structured_only and supported is False:
+            continue
+        models.append(ModelInfo(
+            id=m.id,
+            display_name=getattr(m, "display_name", "") or "",
+            max_input_tokens=getattr(m, "max_input_tokens", None),
+            max_tokens=getattr(m, "max_tokens", None),
+            structured_outputs=bool(supported),
+        ))
+    return models
 
 
 class AnthropicPlanner(_BasePlanner):
@@ -172,7 +261,12 @@ class AnthropicPlanner(_BasePlanner):
         self.last_request = body
         t0 = time.perf_counter()
         try:
-            resp = self.client.messages.create(
+            # Streamed, not because the tokens are rendered as they arrive, but
+            # because the SDK refuses a non-streaming request whose max_tokens
+            # could plausibly outlast a 10 minute HTTP connection. get_final_message()
+            # blocks until the whole reply is in, so the caller sees the same
+            # object messages.create() would have returned.
+            with self.client.messages.stream(
                 model=body["model"],
                 max_tokens=body["max_tokens"],
                 system=body["system"],
@@ -180,7 +274,8 @@ class AnthropicPlanner(_BasePlanner):
                 # extra_body keeps this working across SDK versions that predate the
                 # typed output_config parameter.
                 extra_body={"output_config": body["output_config"]},
-            )
+            ) as stream:
+                resp = stream.get_final_message()
         except anthropic.AuthenticationError as exc:
             raise PlannerError(f"API key rejected by Anthropic: {exc}") from None
         except anthropic.APIStatusError as exc:
@@ -209,8 +304,9 @@ class AnthropicPlanner(_BasePlanner):
 # OpenRouter planner
 # --------------------------------------------------------------------------
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_OPENROUTER_MODEL = os.environ.get(
-    "STUDYPLAN_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+DEFAULT_OPENROUTER_MODEL = (os.environ.get("STUDYPLAN_OPENROUTER_MODEL")
+                            or os.environ.get("STUDYPLAN_MODEL")
+                            or "nvidia/nemotron-3-super-120b-a12b:free")
 
 # Convenience presets for the sidebar. Any OpenRouter slug works; this list is
 # only a shortcut. Schema support is per endpoint and changes over time, so
@@ -224,6 +320,7 @@ OPENROUTER_PRESETS = [
     "~deepseek/deepseek-v4-flash-latest",
     "openai/gpt-oss-20b:free",
     "google/gemma-4-26b-a4b-it:free",
+    "~anthropic/claude-haiku-latest",
 ]
 
 _SCHEMA_UNSUPPORTED_HINTS = (
@@ -260,7 +357,7 @@ class OpenRouterPlanner(_BasePlanner):
     endpoint = OPENROUTER_URL
 
     def __init__(self, api_key: str | None = None, model: str = DEFAULT_OPENROUTER_MODEL,
-                 max_tokens: int = 8000, timeout: float = 180.0,
+                 max_tokens: int = 30000, timeout: float = 180.0,
                  allow_fallback: bool = True):
         import httpx  # ships with the anthropic SDK
 
@@ -497,17 +594,37 @@ def is_free_model(model: str | None, backend: str) -> bool:
     return False
 
 
-def active_backend() -> str:
-    """Which backend the app would use right now: anthropic | openrouter | mock."""
+def available_backends() -> list[str]:
+    """Every backend this environment can reach, preferred first.
+
+    Both provider keys can be set at once; the UI picks between them, so this
+    reports all of them rather than collapsing to one. The baseline is always
+    last and always available.
+    """
+    backends = []
     if os.environ.get("ANTHROPIC_API_KEY"):
-        return "anthropic"
+        backends.append("anthropic")
     if os.environ.get("OPENROUTER_API_KEY"):
-        return "openrouter"
-    return "mock"
+        backends.append("openrouter")
+    backends.append("mock")
+    return backends
 
 
-def get_planner(force_mock: bool = False, model: str | None = None):
-    backend = "mock" if force_mock else active_backend()
+def active_backend() -> str:
+    """The backend used when the caller expresses no preference."""
+    return available_backends()[0]
+
+
+def default_model_for(backend: str) -> str | None:
+    """The model a backend falls back to. None for the baseline, which has none."""
+    return {"anthropic": DEFAULT_MODEL,
+            "openrouter": DEFAULT_OPENROUTER_MODEL}.get(backend)
+
+
+def get_planner(force_mock: bool = False, model: str | None = None,
+                backend: str | None = None):
+    """`backend` is the explicit UI choice; None keeps the env-order default."""
+    backend = "mock" if force_mock else (backend or active_backend())
     if backend == "anthropic":
         return AnthropicPlanner(model=model or DEFAULT_MODEL)
     if backend == "openrouter":
