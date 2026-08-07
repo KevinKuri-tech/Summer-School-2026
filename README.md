@@ -77,16 +77,18 @@ required and `additionalProperties` is false, which keeps the compiled grammar
 small and avoids `$ref` indirection. Structured outputs do not guarantee enum
 capitalisation, so `block_type` is normalised on parse.
 
-Two backends are supported. Anthropic is selected when `ANTHROPIC_API_KEY` is set,
-OpenRouter when `OPENROUTER_API_KEY` is set, otherwise the baseline planner runs.
+Two backends are supported. OpenRouter is preferred and preselected when
+`OPENROUTER_API_KEY` is set, Anthropic is used when only `ANTHROPIC_API_KEY` is
+set, otherwise the baseline planner runs.
 OpenRouter uses the OpenAI-compatible `response_format: json_schema` with
 `strict: true` and `provider.require_parameters: true`, so routing is limited to
 endpoints that honour the schema. Enforcement there is per endpoint rather than
 guaranteed, so responses are still fence-stripped and re-validated.
 
-Model: `claude-sonnet-5` by default, override with `STUDYPLAN_ANTHROPIC_MODEL`.
-OpenRouter has its own `STUDYPLAN_OPENROUTER_MODEL`, because a shared override
-would send an OpenRouter slug to Anthropic.
+Model: OpenRouter defaults to `~anthropic/claude-haiku-latest`, override with
+`STUDYPLAN_OPENROUTER_MODEL`. The Anthropic backend defaults to `claude-sonnet-5`
+and has its own `STUDYPLAN_ANTHROPIC_MODEL`, because a shared override would send
+an OpenRouter slug to Anthropic.
 `claude-haiku-4-5` is cheaper, `claude-opus-5` is stronger. Structured outputs
 are supported on `claude-opus-5`, `claude-sonnet-5`, `claude-opus-4-8`,
 `claude-fable-5` and `claude-haiku-4-5`; `claude-sonnet-4-6` is not on that

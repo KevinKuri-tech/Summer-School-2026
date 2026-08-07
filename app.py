@@ -295,7 +295,12 @@ with st.sidebar:
     st.subheader("Engine")
     backends = available_backends()
     # Both provider keys can be present, so the backend is a choice rather than
-    # something the environment decides for us.
+    # something the environment decides for us. A keyed widget takes its value
+    # from session state, which outranks any index= we pass, so the preselection
+    # has to be seeded there instead. Re-seeded when a stored value is no longer
+    # offered, e.g. after a key was removed from .env.
+    if st.session_state.get("backend") not in backends:
+        st.session_state["backend"] = backends[0]
     backend = st.radio("Backend", backends, format_func=BACKEND_NAME.get,
                        key="backend", horizontal=False)
     label = BACKEND_NAME[backend]
@@ -322,8 +327,12 @@ with st.sidebar:
         st.caption("Only models that support structured outputs are listed: the "
                    "planner constrains the response to the plan schema.")
     elif backend == "openrouter":
-        presets = list(dict.fromkeys(OPENROUTER_PRESETS + [DEFAULT_OPENROUTER_MODEL]))
-        choice = st.selectbox("Model", presets + ["custom..."], index=0,
+        # The default slug leads, so it is what the picker preselects even when
+        # STUDYPLAN_OPENROUTER_MODEL points at something outside the presets.
+        presets = list(dict.fromkeys([DEFAULT_OPENROUTER_MODEL] + OPENROUTER_PRESETS))
+        if st.session_state.get("openrouter_choice") not in presets + ["custom..."]:
+            st.session_state["openrouter_choice"] = DEFAULT_OPENROUTER_MODEL
+        choice = st.selectbox("Model", presets + ["custom..."],
                               key="openrouter_choice")
         st.session_state["model"] = st.text_input(
             "Model slug", value=DEFAULT_OPENROUTER_MODEL, key="openrouter_slug") \

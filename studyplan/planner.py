@@ -317,10 +317,10 @@ DEFAULT_OPENROUTER_MODEL = (os.environ.get("STUDYPLAN_OPENROUTER_MODEL")
 # of writing. A free model NOT on that list still runs, but only via the JSON
 # mode fallback below, where the schema is a hint rather than a constraint.
 OPENROUTER_PRESETS = [
+    "~anthropic/claude-haiku-latest",
     "~deepseek/deepseek-v4-flash-latest",
     "openai/gpt-oss-20b:free",
     "google/gemma-4-26b-a4b-it:free",
-    "~anthropic/claude-haiku-latest",
 ]
 
 _SCHEMA_UNSUPPORTED_HINTS = (
@@ -598,14 +598,15 @@ def available_backends() -> list[str]:
     """Every backend this environment can reach, preferred first.
 
     Both provider keys can be set at once; the UI picks between them, so this
-    reports all of them rather than collapsing to one. The baseline is always
-    last and always available.
+    reports all of them rather than collapsing to one. OpenRouter comes first,
+    so it is what the UI preselects and what active_backend() returns when both
+    keys are present. The baseline is always last and always available.
     """
     backends = []
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        backends.append("anthropic")
     if os.environ.get("OPENROUTER_API_KEY"):
         backends.append("openrouter")
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        backends.append("anthropic")
     backends.append("mock")
     return backends
 
