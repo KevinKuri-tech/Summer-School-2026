@@ -306,7 +306,7 @@ class AnthropicPlanner(_BasePlanner):
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OPENROUTER_MODEL = (os.environ.get("STUDYPLAN_OPENROUTER_MODEL")
                             or os.environ.get("STUDYPLAN_MODEL")
-                            or "nvidia/nemotron-3-super-120b-a12b:free")
+                            or "~anthropic/claude-haiku-latest")
 
 # Convenience presets for the sidebar. Any OpenRouter slug works; this list is
 # only a shortcut. Schema support is per endpoint and changes over time, so
