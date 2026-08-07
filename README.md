@@ -84,7 +84,9 @@ OpenRouter uses the OpenAI-compatible `response_format: json_schema` with
 endpoints that honour the schema. Enforcement there is per endpoint rather than
 guaranteed, so responses are still fence-stripped and re-validated.
 
-Model: `claude-sonnet-5` by default, override with `STUDYPLAN_MODEL`.
+Model: `claude-sonnet-5` by default, override with `STUDYPLAN_ANTHROPIC_MODEL`.
+OpenRouter has its own `STUDYPLAN_OPENROUTER_MODEL`, because a shared override
+would send an OpenRouter slug to Anthropic.
 `claude-haiku-4-5` is cheaper, `claude-opus-5` is stronger. Structured outputs
 are supported on `claude-opus-5`, `claude-sonnet-5`, `claude-opus-4-8`,
 `claude-fable-5` and `claude-haiku-4-5`; `claude-sonnet-4-6` is not on that
