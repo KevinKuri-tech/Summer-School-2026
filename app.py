@@ -32,6 +32,26 @@ LOGO = Path(__file__).resolve().parent / "media" / "pictures" / "Logo.png"
 st.set_page_config(page_title=APP_NAME, page_icon=str(LOGO) if LOGO.exists() else "📅",
                    layout="wide")
 
+# The base scale lives in .streamlit/config.toml. What follows is only for the
+# parts theme settings do not reach. It leans on Streamlit's internal test ids,
+# so it is the first thing to check after a Streamlit upgrade: a stale selector
+# degrades to the default size rather than breaking anything.
+_TYPE_CSS = """
+<style>
+  /* Primary navigation, so it outweighs body text. */
+  .stTabs [data-baseweb="tab"] p { font-size: 1.1rem; font-weight: 600; }
+  /* The grid paints its own cells and ignores the theme base size. */
+  [data-testid="stDataFrame"], [data-testid="stDataFrame"] * { font-size: 1rem; }
+  /* Most of the explanatory copy in this app is captions, and .8rem is too small. */
+  [data-testid="stCaptionContainer"] p { font-size: .95rem; }
+  [data-testid="stExpander"] summary p { font-size: 1.05rem; font-weight: 600; }
+  [data-testid="stMetricValue"] { font-size: 2rem; }
+  [data-testid="stMetricLabel"] p { font-size: 1rem; }
+  [data-testid="stWidgetLabel"] p { font-size: 1rem; }
+</style>
+"""
+st.markdown(_TYPE_CSS, unsafe_allow_html=True)
+
 # Top-left app chrome (above the sidebar), plus a header in the main area so the
 # name sits next to the mark on every tab.
 if LOGO.exists():
@@ -134,7 +154,7 @@ _CLOCK_HTML = """
   html, body { margin: 0; background: transparent; }
   #clock {
     font-family: "Source Sans Pro", -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 0.9rem; font-variant-numeric: tabular-nums; color: #808495;
+    font-size: 1rem; font-variant-numeric: tabular-nums; color: #808495;
     text-align: right; white-space: nowrap;
   }
 </style>
@@ -205,7 +225,7 @@ def render_call_panel(info: dict):
                 if info.get("elapsed") is None:
                     # Static literal, never user input: safe for st.iframe, which
                     # runs the script the counter needs.
-                    st.iframe(_CLOCK_HTML, height=24)
+                    st.iframe(_CLOCK_HTML, height=28)
                 else:
                     st.markdown(f"took **{info['elapsed']:.1f} s**")
 
@@ -383,27 +403,31 @@ tab_setup, tab_plan, tab_progress, tab_export = st.tabs(
 
 # ---------------------------------------------------------------- setup ---
 with tab_setup:
-    st.subheader("Modules")
-    st.caption("Three to six modules. Confidence 1 means you have not started, 5 means solid.")
-    edited = st.data_editor(
-        st.session_state.modules,
-        num_rows="dynamic",
-        width="stretch",
-        column_config={
-            "name": st.column_config.TextColumn("Module", required=True),
-            "exam_date": st.column_config.DateColumn("Exam date", required=True),
-            "difficulty": st.column_config.NumberColumn("Difficulty", min_value=1, max_value=5, step=1),
-            "confidence": st.column_config.NumberColumn("Confidence", min_value=1, max_value=5, step=1),
-            "estimated_hours": st.column_config.NumberColumn("Est. hours", min_value=1.0,
-                                                             max_value=100.0, step=0.5),
-        },
-        key="module_editor",
-    )
-    st.session_state.modules = edited
+    # Two required steps first, everything with a working default folded away
+    # behind the expander below. The expander body still executes on every rerun,
+    # so build_request() sees those values whether or not it was ever opened.
+    with st.container(border=True):
+        st.subheader("Step 1 · Your modules")
+        st.caption("Three to six modules. Confidence 1 means you have not started, 5 means solid.")
+        edited = st.data_editor(
+            st.session_state.modules,
+            num_rows="dynamic",
+            width="stretch",
+            column_config={
+                "name": st.column_config.TextColumn("Module", required=True),
+                "exam_date": st.column_config.DateColumn("Exam date", required=True),
+                "difficulty": st.column_config.NumberColumn("Difficulty", min_value=1, max_value=5, step=1),
+                "confidence": st.column_config.NumberColumn("Confidence", min_value=1, max_value=5, step=1),
+                "estimated_hours": st.column_config.NumberColumn("Est. hours", min_value=1.0,
+                                                                 max_value=100.0, step=0.5),
+            },
+            key="module_editor",
+        )
+        st.session_state.modules = edited
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("Availability (hours per weekday)")
+    with st.container(border=True):
+        st.subheader("Step 2 · Your week")
+        st.caption("Hours you can realistically study on each weekday.")
         hours = {}
         cols = st.columns(7)
         defaults = [2.0, 2.0, 2.0, 2.0, 1.5, 4.0, 3.0]
@@ -411,10 +435,22 @@ with tab_setup:
             with col:
                 hours[i] = st.number_input(WEEKDAYS[i], min_value=0.0, max_value=12.0,
                                            value=defaults[i], step=0.5, key=f"h{i}")
-    with c2:
-        st.subheader("Window and constraints")
-        start = st.date_input("Plan starts", value=date.today())
-        horizon = st.slider("Horizon (days)", 10, 14, 14)
+        st.divider()
+        wc1, wc2 = st.columns([1, 2], vertical_alignment="center")
+        start = wc1.date_input("Plan starts", value=date.today())
+        horizon = wc2.slider("Horizon (days)", 10, 14, 14)
+
+        # Immediate payoff for filling the two steps in, and it surfaces an
+        # over-committed plan before a single API call is spent on it.
+        weekly = sum(hours.values())
+        supply = weekly * horizon / 7
+        demand = sum(float(m.get("estimated_hours") or 0)
+                     for m in st.session_state.modules if m.get("name"))
+        verdict = "" if supply >= demand else "  ·  ⚠ that is less time than the modules need."
+        st.caption(f"About {supply:.1f} h available over {horizon} days · "
+                   f"your modules need about {demand:.1f} h.{verdict}")
+
+    with st.expander("⚙ Advanced settings — session length, blackout dates, preferences"):
         cc1, cc2 = st.columns(2)
         min_len = cc1.number_input("Min session (min)", 20, 90, 30, step=5)
         max_len = cc2.number_input("Max session (min)", 30, 240, 90, step=15)
@@ -423,7 +459,7 @@ with tab_setup:
         preferences = st.text_area(
             "Preferences and constraints",
             "Prefer mornings. No study after 21:00. Wednesday evenings are blocked by work.",
-            height=80)
+            height=110)
 
     blackout = []
     for token in [t.strip() for t in blackout_raw.split(",") if t.strip()]:
@@ -454,7 +490,8 @@ with tab_setup:
             st.error(f"Invalid input: {exc}")
             return None
 
-    generate = st.button("Generate plan", type="primary", disabled=needs_ack)
+    generate = st.button("Generate plan", type="primary", disabled=needs_ack,
+                         width="stretch")
     if needs_ack:
         st.caption("Confirm the paid-model warning in the sidebar first.")
     call_slot = st.container()      # request + clock, directly above the spinner
@@ -548,7 +585,7 @@ with tab_plan:
                         c1.markdown(
                             f"**{icon} {b.start_time} · {b.module}** · {b.duration_minutes} min · "
                             f"{b.block_type} · P{b.priority}  \n{b.topic}  \n"
-                            f"<span style='color:#666;font-size:.85em'>{b.rationale}</span>",
+                            f"<span style='color:#666;font-size:.95em'>{b.rationale}</span>",
                             unsafe_allow_html=True)
                         if c2.button("Done", key=f"d{b.id}"):
                             st.session_state.status[b.id] = "done"

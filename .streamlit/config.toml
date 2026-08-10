@@ -1,0 +1,6 @@
+[theme]
+# 18px instead of Streamlit's 16px default. Heading sizes are pinned below the
+# stock values because heading rems resolve against this larger base, so leaving
+# them alone would make st.title/st.subheader jump much further than the body.
+baseFontSize = 18
+headingFontSizes = ["2.1rem", "1.6rem", "1.25rem"]
