@@ -39,7 +39,7 @@ st.set_page_config(page_title=APP_NAME, page_icon=str(LOGO) if LOGO.exists() els
 _TYPE_CSS = """
 <style>
   /* Primary navigation, so it outweighs body text. */
-  .stTabs [data-baseweb="tab"] p { font-size: 1.1rem; font-weight: 600; }
+  .stTabs [data-baseweb="tab"] p { font-size: 1.35rem; font-weight: 600; }
   /* The grid paints its own cells and ignores the theme base size. */
   [data-testid="stDataFrame"], [data-testid="stDataFrame"] * { font-size: 1rem; }
   /* Most of the explanatory copy in this app is captions, and .8rem is too small. */
