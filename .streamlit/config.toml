@@ -1,12 +1,18 @@
 [theme]
-# 18px instead of Streamlit's 16px default. Heading sizes are pinned below the
-# stock values because heading rems resolve against this larger base, so leaving
-# them alone would make st.title/st.subheader jump much further than the body.
+# 18px statt 16px Default. Heading-rem lösen gegen diese groessere Base auf,
+# darum bewusst kleiner als stock (2.75/2.25/1.75) fuer flachere Hierarchie.
 baseFontSize = 18
-headingFontSizes = ["2.1rem", "1.6rem", "1.25rem"]
-base = "dark"
+headingFontSizes = ["2.1rem", "1.6rem", "1.5rem", "1.35rem", "1.2rem", "1.1rem"]
+font = "sans-serif"
+
+[theme.light]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#31333F"
 primaryColor = "#FF4B4B"
+
+[theme.dark]
 backgroundColor = "#0E1117"
 secondaryBackgroundColor = "#262730"
 textColor = "#FAFAFA"
-font = "sans serif"
+primaryColor = "#FF4B4B"
