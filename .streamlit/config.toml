@@ -4,3 +4,9 @@
 # them alone would make st.title/st.subheader jump much further than the body.
 baseFontSize = 18
 headingFontSizes = ["2.1rem", "1.6rem", "1.25rem"]
+base = "dark"
+primaryColor = "#FF4B4B"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
+font = "sans serif"
