@@ -82,14 +82,19 @@ def init_state() -> None:
     ss.setdefault("last_call", None)         # what was sent, where, how long it took
     ss.setdefault("last_replan_call", None)  # the same, for the replan action
     ss.setdefault("paid_model_ack", False)   # cost warning confirmed this session
-    ss.setdefault("modules", [
+    starter_modules = [
         {"name": "Statistics", "exam_date": date.today() + timedelta(days=12),
          "difficulty": 4, "confidence": 2, "estimated_hours": 14.0},
         {"name": "Microeconomics", "exam_date": date.today() + timedelta(days=9),
          "difficulty": 3, "confidence": 3, "estimated_hours": 9.0},
         {"name": "Databases", "exam_date": date.today() + timedelta(days=14),
          "difficulty": 3, "confidence": 4, "estimated_hours": 7.0},
-    ])
+    ]
+    # Two separate entries on purpose: `module_seed` is what the editor is fed and
+    # has to stay unchanged across reruns (see the data_editor in Step 1), while
+    # `modules` carries the edited rows that the rest of the app reads.
+    ss.setdefault("module_seed", [dict(m) for m in starter_modules])
+    ss.setdefault("modules", [dict(m) for m in starter_modules])
 
 
 init_state()
@@ -409,8 +414,21 @@ with tab_setup:
     with st.container(border=True):
         st.subheader("Step 1 · Your modules")
         st.caption("Three to six modules. Confidence 1 means you have not started, 5 means solid.")
+        # The editor is fed `module_seed`, never its own output. With
+        # num_rows="dynamic" Streamlit derives the widget identity from the
+        # serialized data itself (only "fixed" editors get a schema-based
+        # identity), so assigning the result back into the editor's input would
+        # change that identity on the following rerun. The browser posts each
+        # edit against the id it last received, which would then be one run
+        # stale: the server registers it as a new widget with no pending edits,
+        # drops the edit, and the grid remounts on the unedited data — the cell
+        # snaps back to its old value until you type it a second time.
+        # Keeping the input fixed keeps the id stable, and Streamlit re-applies
+        # the accumulated edits (added and deleted rows included) on every rerun.
+        # To reset the table programmatically, replace `module_seed` and delete
+        # the "module_editor" key so the stored edits go with it.
         edited = st.data_editor(
-            st.session_state.modules,
+            st.session_state.module_seed,
             num_rows="dynamic",
             width="stretch",
             column_config={
