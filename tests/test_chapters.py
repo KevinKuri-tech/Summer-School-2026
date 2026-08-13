@@ -245,12 +245,15 @@ def test_empty_paste_yields_nothing():
 # the Setup tab
 # --------------------------------------------------------------------------
 def _fresh_app():
-    """A new session on the real app, pinned to the offline planner."""
+    """A new session on the real app, signed in and pinned to the offline planner."""
     from streamlit.testing.v1 import AppTest
 
     at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"),
                            default_timeout=90)
     at.session_state["force_mock"] = True
+    # Past the login gate, which otherwise stops the script before any of this
+    # exists. The gate itself is covered in test_auth.py.
+    at.session_state["auth_user"] = "student1"
     return at.run()
 
 

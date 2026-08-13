@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pandas as pd
 import streamlit as st
 
+import login
 from studyplan import exporting, planner as planner_mod, rules, setup_io
 from studyplan.planner import (ANTHROPIC_PRESETS, DEFAULT_MODEL, DEFAULT_OPENROUTER_MODEL,
                                OPENROUTER_PRESETS, MockPlanner, PlannerError,
@@ -53,6 +54,12 @@ _TYPE_CSS = """
 </style>
 """
 st.markdown(_TYPE_CSS, unsafe_allow_html=True)
+
+# The gate. Everything below this line — the chrome, the sidebar, the tabs, and
+# every widget in them — belongs to a signed-in session: when there is none this
+# call draws the login screen and stops the script, so there is nothing further
+# down the page to reach past it.
+USER = login.require_login()
 
 # Top-left app chrome (above the sidebar), plus a header in the main area so the
 # name sits next to the mark on every tab.
@@ -537,6 +544,18 @@ def anthropic_model_options() -> list[tuple[str, str]]:
 
 
 with st.sidebar:
+    # Who is signed in, and the way out. Top of the sidebar because these
+    # accounts are shared: on a lab machine the first question is whose session
+    # this is, and signing out has to be findable without reading the page.
+    # Tertiary, so the label fits on one line in a sidebar column: the boxed
+    # variants reserve enough padding to wrap "Sign out" in two.
+    _who, _out = st.columns([1.5, 1], vertical_alignment="center")
+    _who.markdown(f"Signed in as **{USER}**")
+    if _out.button("Sign out", type="tertiary", width="stretch",
+                   help="Ends the session and clears everything typed into it"):
+        login.sign_out()
+    st.divider()
+
     st.subheader("Engine")
     backends = available_backends()
     # Both provider keys can be present, so the backend is a choice rather than

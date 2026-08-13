@@ -17,6 +17,10 @@ cp .env.example .env                     # then put your key in it, optional
 uv run streamlit run app.py
 ```
 
+The app opens on a sign-in screen. The built-in roster is three classroom
+accounts — `student1`, `student2`, `student3` — sharing the password
+`SummerAI2026`. See [Sign-in](#sign-in) for replacing them.
+
 `.env` is read on import of the `studyplan` package, so the app, the tests and
 the eval harness all see it. An already-exported variable wins over the file, so
 `export ANTHROPIC_API_KEY=sk-ant-...` still works if you prefer that.
@@ -25,7 +29,7 @@ Without an API key the app runs the deterministic baseline planner, so the UI is
 fully demoable at zero cost.
 
 ```bash
-uv run pytest                       # rule engine, chapters and Setup-tab UI (57 tests)
+uv run pytest                       # rules, chapters, sign-in and the UI (78 tests)
 uv run python check_backend.py      # is the configured backend actually reachable?
 uv run python eval/run_eval.py      # 15 cases, baseline planner, free
 uv run python eval/run_eval.py --live --repair    # same cases against the model
@@ -33,14 +37,17 @@ uv run python eval/run_eval.py --live --repair    # same cases against the model
 
 ## Scope
 
-In: manual input for 1 to 6 modules, optional chapters per module (typed or
-pasted from a syllabus), saving and reloading the setup as JSON, AI plan
-generation in strict JSON, daily and weekly view, per-block edit, "I missed
-this" plus replanning, progress screen, CSV / JSON / printable HTML export,
-evaluation on 15 cases.
+In: sign-in against a fixed roster of accounts, manual input for 1 to 6 modules,
+optional chapters per module (typed or pasted from a syllabus), saving and
+reloading the setup as JSON, AI plan generation in strict JSON, daily and weekly
+view, per-block edit, "I missed this" plus replanning, progress screen, CSV /
+JSON / printable HTML export, evaluation on 15 cases.
 
-Out, deliberately: authentication, a server-side database, mobile app, calendar
-sync, spaced-repetition engine, chatbot.
+Out, deliberately: user accounts as a feature — registration, password reset,
+per-user storage, roles — plus a server-side database, mobile app, calendar
+sync, spaced-repetition engine, chatbot. The sign-in that exists is a gate in
+front of a demo, not an identity system; see [Sign-in](#sign-in) for exactly
+what it does and does not promise.
 
 Chapters were originally out of scope and are now in, for one reason: without
 them `topic` is invented. The system prompt forbids inventing topics while
@@ -55,7 +62,9 @@ not a database.
 
 ```
 app.py                 Streamlit UI (setup, plan, progress, export)
+login.py               The sign-in gate and its screen
 check_backend.py       Connectivity check: .env -> key -> model -> schema-valid reply
+studyplan/auth.py      Account roster + password verification
 studyplan/schema.py    Pydantic input models + hand-written output JSON schema
 studyplan/prompts.py   System prompt, generation, replanning, repair prompts
 studyplan/planner.py   Backends (Anthropic, OpenRouter) + deterministic baseline
@@ -75,6 +84,68 @@ writes the *output*. Reusing `PlanRequest` as the file format means there is one
 contract to keep in sync, and validation comes free — `pydantic.ValidationError`
 is a `ValueError`, so a hand-edited file with a 40 day horizon is rejected with
 the field name already in the message.
+
+### Sign-in
+
+`app.py` calls `login.require_login()` before it draws anything. That call either
+returns the signed-in username or renders the login screen and calls
+`st.stop()`. Because the app is a top-to-bottom script, stopping is total: the
+sidebar, the tabs and every widget in them are never created, so there is no
+hidden page underneath the login screen to reach past it. The signed-in username
+lives in session state, which is server-side and per browser session.
+
+Passwords are stored as PBKDF2-HMAC-SHA256 digests (240k iterations, per-account
+random salt), so the repository does not carry the secrets and the file cannot
+be used to confirm a guess. The check is `hmac.compare_digest`, and an unknown
+username still pays for a full round against a throwaway digest so the screen
+cannot be timed to enumerate the roster.
+
+Replace the roster without editing code:
+
+```bash
+# name:secret pairs, separated by ;
+STUDYPLAN_USERS=alice:hunter2;bob:pbkdf2_sha256$240000$...$...
+uv run python -m studyplan.auth 'hunter2'   # mint a digest to paste in
+```
+
+A plaintext secret is accepted too, which is no worse than the API keys already
+in `.env`; a digest is better, because it does not read over anyone's shoulder.
+
+What this is not: there is no registration, no password reset, no roles, and no
+per-user storage — signing out clears the session, and nothing was ever written
+to disk under a username. Five wrong guesses trigger a 30 second cooldown, which
+is a speed bump for someone typing at the screen and nothing more, since session
+state is per session and a new tab starts a fresh count. Anything past a
+classroom demo wants a real identity provider in front of this app.
+
+### The login screen
+
+Three layers in one stacking context: the intro video pinned to the viewport at
+`z-index: 0`, a gradient scrim at `1` painted by the column itself rather than by
+a div, and the composition at `2`. Getting that order wrong is not subtle — a
+scrim that lands on top dims the card and its own submit button along with the
+footage.
+
+The opening move is two CSS animations on elements that already sit in their
+final layout position, so only `transform` and `opacity` animate: the logo fades
+in at hero size over the middle of the video, holds there for a beat, then
+settles up into a header while the card rises from below. The card occupies its
+space from the first frame even while it is still invisible, so nothing reflows
+when it arrives. It plays once per session — a wrong password finds the screen
+already arrived rather than replaying it — and `prefers-reduced-motion` gets the
+same screen with no movement at all.
+
+`media/pictures/Logo.png` is black artwork on white paper, which is right for the
+app's light chrome and would be a white slab on top of video. `login.py` reads
+its greyscale as an alpha channel instead, which turns the paper transparent and
+the ink white while keeping every antialiased edge, then crops to the ink. A CSS
+`filter: invert()` cannot do that without also painting the paper.
+
+Everything the screen styles is scoped by `.stApp:has(#nx-login)`, a marker only
+it prints, so none of it can reach the planner UI. The selectors underneath lean
+on Streamlit's internal test ids — `stLayoutWrapper`, `stTextInputRootElement` —
+so they are the first thing to check after a Streamlit upgrade. A stale selector
+costs the screen its looks, not its function.
 
 ### The chapter table
 
@@ -397,8 +468,12 @@ which is what makes chapters worth typing in at all, but that is a manual
 download and upload — the generated plan, the progress marks and the token
 counter are not in it. Export before you close the tab.
 
-**Single user, no auth.** No accounts, no multi-tenancy, no server-side storage.
-The API key lives in `.env` on the machine running Streamlit.
+**A gate, not accounts.** Signing in picks a name off a fixed roster and unlocks
+the app. It does not give that name anything of its own: no multi-tenancy, no
+server-side storage, no roles, and two students signed in as `student1` in two
+browsers get two unrelated sessions rather than one shared plan. The API key
+lives in `.env` on the machine running Streamlit, and everyone who signs in
+spends it.
 
 **Fixed horizon.** 10 to 14 days, 1 to 6 modules, by schema. A semester plan, a
 3-day cram or a 10-module load is out of range. (The Setup tab's caption says
