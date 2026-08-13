@@ -15,11 +15,19 @@ from pydantic import BaseModel, Field, field_validator
 
 BLOCK_TYPES = ("learn", "practice", "revision", "buffer")
 
-# Leading "1.", "2)", "Ch. 3 -", "Chapter 3:", "- ", "* ". A bare number only
-# counts as decoration when a separator or space follows it, so a chapter
-# genuinely called "3D geometry" keeps its name.
+# The words a syllabus puts in front of a section number. Shared with
+# setup_io, which needs the same vocabulary to find where a run-on paste lost
+# its line breaks.
+SECTION_WORD = (
+    r"(?:ch(?:apter)?|topic|unit|module|section|part|week|lecture|lesson"
+    r"|kapitel|thema|abschnitt|lektion|woche)"
+)
+
+# Leading "1.", "2)", "Ch. 3 -", "Chapter 3:", "Topic 1.1:", "- ", "* ". A bare
+# number only counts as decoration when a separator or space follows it, so a
+# chapter genuinely called "3D geometry" keeps its name.
 _DECORATION = re.compile(
-    r"^\s*(?:[-*•·]\s*|(?:ch(?:apter)?\.?\s*)?\d+(?:\.\d+)*(?:\s*[.)\]:\-–]\s*|\s+))",
+    r"^\s*(?:[-*•·]\s*|(?:" + SECTION_WORD + r"\.?\s*)?\d+(?:\.\d+)*(?:\s*[.)\]:\-–]\s*|\s+))",
     re.IGNORECASE,
 )
 

@@ -242,6 +242,76 @@ def test_empty_paste_yields_nothing():
 
 
 # --------------------------------------------------------------------------
+# run-on pastes: a syllabus copied out of a PDF arrives with no line breaks
+# --------------------------------------------------------------------------
+SYLLABI = Path(__file__).resolve().parent.parent / "eval"
+
+
+def test_section_words_other_than_chapter_are_stripped():
+    rows = setup_io.parse_syllabus(
+        "Topic 1.1: Bar\nUnit 2: Qux\nWeek 5: Zap\nLecture 3 - Zip\nKapitel 4. Zop")
+    assert [r["name"] for r in rows] == ["Bar", "Qux", "Zap", "Zip", "Zop"]
+
+
+@pytest.mark.parametrize("stem", ["test_syllabus_stat", "test_syllabus_micro"])
+def test_a_syllabus_pasted_without_any_line_breaks_still_splits(stem):
+    text = (SYLLABI / f"{stem}.txt").read_text(encoding="utf-8")
+    assert len(text.splitlines()) == 1, "fixture must stay a single run-on line"
+
+    rows = setup_io.parse_syllabus(text)
+
+    # 6 chapters and their 3 topics each, rather than one 3000-character row.
+    assert len(rows) == 24
+    # One known miss per corpus, pinned in the test below; everything else comes
+    # back as a bare title.
+    assert sum(len(r["name"]) > 80 for r in rows) <= 1
+
+
+def test_run_on_paste_recovers_the_real_titles():
+    text = (SYLLABI / "test_syllabus_micro.txt").read_text(encoding="utf-8")
+    names = [r["name"] for r in setup_io.parse_syllabus(text)]
+    assert names[:4] == ["Foundations of Irrelevance & Choice",
+                         "The Opportunity Cost of Time Travel",
+                         "Scarcity in Infinitely Repeating Rooms",
+                         "The Irrational Utility of Shiny Objects"]
+    assert names[-1] == "Asymmetric Information & The Lemon Market for Used Magic Wands"
+
+
+def test_camel_cased_words_are_not_mistaken_for_a_description():
+    """The glue split must not cut real titles: "JavaScript" is one word."""
+    rows = setup_io.parse_syllabus(
+        "Introduction to JavaScript Programming and Web Development with Modern Frameworks\n"
+        "Databases with PostgreSQL and MySQL for Large Scale Web Applications")
+    assert [r["name"] for r in rows] == [
+        "Introduction to JavaScript Programming and Web Development with Modern Frameworks",
+        "Databases with PostgreSQL and MySQL for Large Scale Web Applications"]
+
+
+def test_a_short_line_mentioning_a_section_word_is_not_split():
+    assert [r["name"] for r in setup_io.parse_syllabus("Introduction to Part 2 of the course")] \
+        == ["Introduction to Part 2 of the course"]
+
+
+def test_run_on_paste_is_still_bounded():
+    blob = "".join(f"Chapter {i}: Heading {i}" for i in range(200))
+    assert len(setup_io.parse_syllabus(blob)) == setup_io.MAX_CHAPTERS
+
+
+def test_a_title_case_description_is_the_known_limit_of_the_glue_split():
+    """The one case the heuristic cannot reach, pinned so a change is deliberate.
+
+    "...CoalitionsSetting Marginal Revenue equal to Marginal Cost..." keeps too
+    many capitals for _reads_as_prose to call it a sentence. Loosening the
+    threshold far enough to catch it starts splitting "JavaScript" instead, so
+    this row stays glued and the student edits it by hand.
+    """
+    glued = ("Topic 4.3: Profit Maximization for Shadowy Syndicate CoalitionsSetting Marginal "
+             "Revenue equal to Marginal Cost ($MR = MC$) while avoiding superhero intervention.")
+    name = setup_io.parse_syllabus(glued)[0]["name"]
+    assert name.startswith("Profit Maximization for Shadowy Syndicate CoalitionsSetting")
+
+
+# --------------------------------------------------------------------------
 # the Setup tab
 # --------------------------------------------------------------------------
 def _fresh_app():

@@ -321,6 +321,8 @@ OPENROUTER_PRESETS = [
     "~deepseek/deepseek-v4-flash-latest",
     "openai/gpt-oss-20b:free",
     "google/gemma-4-26b-a4b-it:free",
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-sonnet-5",
 ]
 
 _SCHEMA_UNSUPPORTED_HINTS = (
