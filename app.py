@@ -937,7 +937,7 @@ with tab_plan:
                 for v in warns:
                     st.warning(str(v))
 
-        st.write(plan.strategy)
+        st.markdown(f"**Proposed strategy:** {plan.strategy}")
         if plan.change_log:
             with st.expander("Changes", expanded=True):
                 for line in plan.change_log:
