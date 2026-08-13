@@ -90,6 +90,8 @@ def init_state() -> None:
     ss.setdefault("accepted", False)
     ss.setdefault("last_call", None)         # what was sent, where, how long it took
     ss.setdefault("last_replan_call", None)  # the same, for the replan action
+    ss.setdefault("replan_notice", None)     # outcome message, survives the rerun below
+    ss.setdefault("replanned", False)        # current plan came out of a replan
     ss.setdefault("paid_model_ack", False)   # cost warning confirmed this session
     starter_modules = [
         {"name": "Statistics", "exam_date": date.today() + timedelta(days=12),
@@ -905,6 +907,7 @@ with tab_setup:
                     st.session_state.violations = viol
                     st.session_state.status = {b.id: "todo" for b in result.plan.blocks}
                     st.session_state.accepted = False
+                    st.session_state.replanned = False
                     with status_slot:
                         st.success(f"Plan generated ({result.source}) in "
                                    f"{info['elapsed']:.1f} s. Open the Plan tab to review.")
@@ -948,7 +951,13 @@ with tab_plan:
                     st.write(f"- {r}")
 
         if not st.session_state.accepted:
-            st.warning("Review the plan and accept it before using it. You can edit any block below.")
+            if st.session_state.replanned:
+                st.warning("This plan was rebuilt by the last replan, so it needs "
+                           "accepting again. The metrics, changes and warnings above "
+                           "describe the new plan. You can edit any block below.")
+            else:
+                st.warning("Review the plan and accept it before using it. "
+                           "You can edit any block below.")
             if st.button("Accept plan", type="primary"):
                 st.session_state.accepted = True
                 st.rerun()
@@ -1090,6 +1099,7 @@ with tab_progress:
                 "Replanning...", lambda p, r: p.replan(r, plan, today),
                 new_req, today=today)
             st.session_state.last_replan_call = info
+            st.session_state.replan_notice = None
 
             if result:
                 frozen = [b for b in plan.blocks if b.date < today]
@@ -1101,12 +1111,24 @@ with tab_progress:
                 for b in merged:
                     st.session_state.status.setdefault(b.id, "todo")
                 st.session_state.accepted = False
-                with replan_status_slot:
-                    st.success(f"Replanned in {info['elapsed']:.1f} s. "
-                               "Review the changes in the Plan tab.")
+                st.session_state.replanned = True
+                # Streamlit draws every tab in one top-to-bottom pass, and the
+                # Plan tab's body sits above this one, so it has already rendered
+                # from the pre-replan state by the time we get here. Switching to
+                # it is a client-side move that starts no new script run, so
+                # without this rerun the student would be looking at the old
+                # plan's changes and warnings under a stale "Plan accepted.".
+                # The outcome message goes through session state to survive it.
+                st.session_state.replan_notice = (
+                    f"Replanned in {info['elapsed']:.1f} s. Review the new changes "
+                    "and warnings in the Plan tab, then accept the plan again.")
+                st.rerun()
         elif st.session_state.last_replan_call:
             with replan_call_slot:
                 render_call_panel(st.session_state.last_replan_call)
+            if st.session_state.replan_notice:
+                with replan_status_slot:
+                    st.success(st.session_state.replan_notice)
 
 # --------------------------------------------------------------- export ---
 with tab_export:
