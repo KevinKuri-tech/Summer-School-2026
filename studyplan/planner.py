@@ -476,6 +476,23 @@ def _fmt(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
+def _pick_chapter(mod, left: dict[str, int], btype: str) -> str | None:
+    """Which chapter this block should cover, or None if the module has none.
+
+    Revision goes to the shakiest chapter, since that is where re-reading pays
+    off most; everything else goes to whichever chapter still has the largest
+    unscheduled budget, which spreads the module over its whole syllabus
+    instead of finishing chapter one before starting chapter two.
+    """
+    if not left:
+        return None
+    confidence = {c.name: (c.confidence or mod.confidence) for c in mod.chapters}
+    if btype == "revision":
+        return min(left, key=lambda n: (confidence.get(n, mod.confidence), -left[n], n))
+    unfinished = {n: v for n, v in left.items() if v > 0} or left
+    return max(unfinished, key=lambda n: (unfinished[n], -confidence.get(n, mod.confidence)))
+
+
 class MockPlanner:
     """Greedy urgency-weighted scheduler. Never calls the network."""
 
@@ -500,6 +517,10 @@ class MockPlanner:
         if carry:
             for name, extra in carry.items():
                 remaining[name] = remaining.get(name, 0) + extra
+        # Per-chapter budgets, drawn down alongside the module budget so heavier
+        # and shakier chapters end up with more scheduled minutes. Empty for
+        # modules without chapters, which then keep the generic topic text.
+        chap_left = {m.name: m.chapter_minutes() for m in req.modules}
         blocks: list[dict] = []
         counter = 1
 
@@ -535,19 +556,22 @@ class MockPlanner:
                 dur = max(dur, av.min_session_minutes)
                 if used + dur > capacity:
                     break
+                chapter = _pick_chapter(mod, chap_left[mod.name], btype)
                 blocks.append({
                     "id": f"b{counter:03d}",
                     "date": day.isoformat(),
                     "start_time": _fmt(cursor),
                     "duration_minutes": dur,
                     "module": mod.name,
-                    "topic": f"{mod.name}: {btype} session",
+                    "topic": chapter or f"{mod.name}: {btype} session",
                     "block_type": btype,
                     "priority": min(5, max(1, round(_urgency(mod, day) / 4))),
                     "rationale": (f"{(mod.exam_date - day).days} days to exam, "
                                   f"difficulty {mod.difficulty}, confidence {mod.confidence}."),
                 })
                 remaining[mod.name] = max(0.0, remaining[mod.name] - dur)
+                if chapter is not None:
+                    chap_left[mod.name][chapter] = max(0, chap_left[mod.name][chapter] - dur)
                 used += dur
                 cursor += dur + 15
                 counter += 1

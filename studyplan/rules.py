@@ -11,9 +11,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from .schema import PlanRequest, StudyBlock, StudyPlan
+from .schema import PlanRequest, StudyBlock, StudyPlan, normalise_chapter
 
 SEVERITIES = ("error", "warning")
+
+# Below this length a containment match is more likely to be a coincidence than
+# a real reference, so short chapter names have to match exactly.
+_MIN_PARTIAL = 4
+
+
+def _topic_matches(topic_key: str, chapter_key: str) -> bool:
+    if not topic_key or not chapter_key:
+        return False
+    if topic_key == chapter_key:
+        return True
+    short, long = sorted((topic_key, chapter_key), key=len)
+    return len(short) >= _MIN_PARTIAL and short in long
 
 
 @dataclass
@@ -118,6 +131,38 @@ def validate_plan(req: PlanRequest, plan: StudyPlan, today: date | None = None) 
             v.append(Violation("under_allocated",
                                f"{m.name}: {have} min scheduled vs {int(want)} min estimated.",
                                severity="warning"))
+
+    # R11/R12 syllabus grounding. Chapters are optional, so a request without
+    # any leaves these two checks completely inert and the older rules decide
+    # the outcome exactly as they did before chapters existed.
+    #
+    # Both are warnings on purpose. A topic the student did not list is worth
+    # showing, but it is not a reason to delete a block the student may still
+    # want: errors() feeds the repair round and autorepair(), and neither
+    # should be dropping otherwise-legal study time over a naming mismatch.
+    if any(m.chapters for m in req.modules):
+        chapter_keys = {m.name: {c.name: normalise_chapter(c.name) for c in m.chapters}
+                        for m in req.modules if m.chapters}
+
+        for b in plan.blocks:
+            keys = chapter_keys.get(b.module)
+            if not keys:
+                continue
+            topic_key = normalise_chapter(b.topic)
+            if not any(_topic_matches(topic_key, k) for k in keys.values()):
+                v.append(Violation("unknown_chapter",
+                                   f"'{b.topic}' is not a chapter of {b.module}.",
+                                   severity="warning", block_id=b.id))
+
+        for m in req.modules:
+            if not m.chapters or m.exam_date <= req.start_date:
+                continue
+            topics = [normalise_chapter(b.topic) for b in plan.blocks if b.module == m.name]
+            for name, key in chapter_keys[m.name].items():
+                if not any(_topic_matches(t, key) for t in topics):
+                    v.append(Violation("chapter_uncovered",
+                                       f"{m.name}: chapter '{name}' has no study block.",
+                                       severity="warning"))
     return v
 
 

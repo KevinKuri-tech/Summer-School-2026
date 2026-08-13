@@ -8,22 +8,91 @@ false everywhere, which also keeps the compiled grammar small.
 
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 
 from pydantic import BaseModel, Field, field_validator
 
 BLOCK_TYPES = ("learn", "practice", "revision", "buffer")
 
+# Leading "1.", "2)", "Ch. 3 -", "Chapter 3:", "- ", "* ". A bare number only
+# counts as decoration when a separator or space follows it, so a chapter
+# genuinely called "3D geometry" keeps its name.
+_DECORATION = re.compile(
+    r"^\s*(?:[-*•·]\s*|(?:ch(?:apter)?\.?\s*)?\d+(?:\.\d+)*(?:\s*[.)\]:\-–]\s*|\s+))",
+    re.IGNORECASE,
+)
+
+
+def strip_chapter_decoration(text: str) -> str:
+    """Drop syllabus numbering from a chapter line, keeping the original casing."""
+    return _DECORATION.sub("", text or "", count=1).strip()
+
+
+def normalise_chapter(text: str) -> str:
+    """Comparison key for chapter names.
+
+    The model is told to echo chapter names verbatim but tends to re-decorate
+    them ("Ch. 3 - Distributions" for the chapter "Distributions"), so matching
+    happens on the stripped, case-folded, whitespace-collapsed form rather than
+    on the raw string.
+    """
+    return " ".join(strip_chapter_decoration(text).casefold().split())
+
 
 # --------------------------------------------------------------------------
 # Input
 # --------------------------------------------------------------------------
+class Chapter(BaseModel):
+    """One syllabus item inside a module.
+
+    `weight` is relative size only, never absolute time: the module's
+    `estimated_hours` stays the single source of truth for the total, and
+    `Module.chapter_minutes()` distributes it. That way the two fields can
+    never contradict each other.
+    """
+
+    name: str
+    weight: int = Field(default=3, ge=1, le=5)  # 1 = short, 5 = the monster
+    confidence: int | None = Field(default=None, ge=1, le=5)  # None = use the module's
+
+
 class Module(BaseModel):
     name: str
     exam_date: date
     difficulty: int = Field(ge=1, le=5)
     confidence: int = Field(ge=1, le=5)  # 1 = knows nothing yet, 5 = solid
     estimated_hours: float = Field(gt=0, le=200)
+    # Optional. With no chapters the module behaves exactly as it did before
+    # they existed, everywhere: planner, rules and prompt all fall back.
+    chapters: list[Chapter] = Field(default_factory=list, max_length=40)
+
+    def chapter_minutes(self) -> dict[str, int]:
+        """Split `estimated_hours` over the chapters, weighted by size and doubt.
+
+        Returns an empty dict when there are no chapters. The values always sum
+        to exactly the module budget: proportional shares are floored and the
+        leftover minutes are handed out by largest remainder, because plain
+        rounding drifts by a few minutes and would make the split disagree with
+        the `estimated_hours` the student typed.
+        """
+        if not self.chapters:
+            return {}
+        total = int(round(self.estimated_hours * 60))
+        weights = [c.weight * (6 - (c.confidence or self.confidence)) for c in self.chapters]
+        pool = sum(weights)  # >= 1 per chapter, so never zero
+        exact = [total * w / pool for w in weights]
+        out = [int(x) for x in exact]
+        for i in sorted(range(len(out)), key=lambda i: exact[i] - out[i], reverse=True):
+            if sum(out) >= total:
+                break
+            out[i] += 1
+        # Duplicate chapter names collapse into one key, so add rather than
+        # overwrite to keep the sum intact.
+        merged: dict[str, int] = {}
+        for c, minutes in zip(self.chapters, out):
+            merged[c.name] = merged.get(c.name, 0) + minutes
+        return merged
 
 
 class Availability(BaseModel):

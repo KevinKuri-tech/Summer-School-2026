@@ -16,13 +16,15 @@ from pathlib import Path
 # launched from (cwd, AppTest, some Streamlit/Windows setups).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import pandas as pd
 import streamlit as st
 
-from studyplan import exporting, planner as planner_mod, rules
+from studyplan import exporting, planner as planner_mod, rules, setup_io
 from studyplan.planner import (ANTHROPIC_PRESETS, DEFAULT_MODEL, DEFAULT_OPENROUTER_MODEL,
                                OPENROUTER_PRESETS, MockPlanner, PlannerError,
                                available_backends, is_free_model)
-from studyplan.schema import Availability, Module, PlanRequest, StudyBlock, StudyPlan
+from studyplan.schema import (Availability, Chapter, Module, PlanRequest, StudyBlock,
+                              StudyPlan)
 
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -96,8 +98,226 @@ def init_state() -> None:
     ss.setdefault("module_seed", [dict(m) for m in starter_modules])
     ss.setdefault("modules", [dict(m) for m in starter_modules])
 
+    # Chapters repeat that split once per module, keyed by module name. Only the
+    # focused module's editor is ever rendered, so `chapters` is the only place
+    # the other modules' rows survive: Streamlit discards widget state for
+    # widgets that a rerun did not draw.
+    ss.setdefault("chapter_seed", {m["name"]: [] for m in starter_modules})
+    ss.setdefault("chapters", {m["name"]: [] for m in starter_modules})
+    ss.setdefault("chapter_focus", starter_modules[0]["name"])
+    ss.setdefault("_prev_chapter_focus", starter_modules[0]["name"])
+    ss.setdefault("_module_names", [m["name"] for m in starter_modules])
+    ss.setdefault("_setup_token", None)   # upload already applied
+
+    # Step 2 and the advanced settings are keyed so that loading a setup file can
+    # drive them. A keyed widget's session value outranks any value= argument, so
+    # the defaults are seeded here and the widgets below pass key= only.
+    for i, default in enumerate([2.0, 2.0, 2.0, 2.0, 1.5, 4.0, 3.0]):
+        ss.setdefault(f"h{i}", default)
+    ss.setdefault("plan_start", date.today())
+    ss.setdefault("horizon", 14)
+    ss.setdefault("min_len", 30)
+    ss.setdefault("max_len", 90)
+    ss.setdefault("day_start", "09:00")
+    ss.setdefault("blackout_raw", "")
+    ss.setdefault("preferences",
+                  "Prefer mornings. No study after 21:00. "
+                  "Wednesday evenings are blocked by work.")
+
 
 init_state()
+
+
+CHAPTER_COLUMNS = ("name", "weight", "confidence")
+
+
+def chapter_key(module_name: str) -> str:
+    return f"chapters::{module_name}"
+
+
+def chapter_frame(rows: list[dict]) -> pd.DataFrame:
+    """A module's chapter rows as a typed frame.
+
+    The module table can be fed plain dicts because it always has rows to infer
+    a shape from. A module with no chapters yet has none, and an editor built
+    from an empty list of dicts renders with no columns at all — nothing to type
+    into, so the table could never be filled. Declaring the columns and their
+    dtypes here keeps the empty grid usable, and keeps Confidence nullable so
+    "leave it blank to use the module's" stays expressible.
+    """
+    frame = pd.DataFrame(list(rows), columns=list(CHAPTER_COLUMNS))
+    return frame.astype({"name": "string", "weight": "Int64", "confidence": "Int64"})
+
+
+def frame_to_rows(frame: pd.DataFrame) -> list[dict]:
+    """Back to plain rows, with pandas' missing values normalised to None."""
+    return [{c: (None if pd.isna(rec.get(c)) else rec.get(c)) for c in CHAPTER_COLUMNS}
+            for rec in frame.to_dict("records")]
+
+
+def apply_editor_delta(rows: list[dict], delta: dict | None) -> list[dict]:
+    """Fold a data_editor's pending edits into the rows it was seeded with.
+
+    Only needed when an editor is about to disappear without having returned:
+    clicking a different module blurs the focused cell, so the edit and the new
+    selection arrive in the same message and the editor is never re-rendered to
+    hand its value back. Streamlit still holds the delta under the widget key at
+    callback time, so it is applied here instead.
+    """
+    out = [dict(r) for r in rows]
+    if not delta:
+        return out
+    for idx, changes in (delta.get("edited_rows") or {}).items():
+        i = int(idx)
+        if 0 <= i < len(out):
+            out[i].update(changes)
+    for added in (delta.get("added_rows") or []):
+        if added:
+            out.append({c: added.get(c) for c in CHAPTER_COLUMNS})
+    for i in sorted((delta.get("deleted_rows") or []), reverse=True):
+        if 0 <= int(i) < len(out):
+            out.pop(int(i))
+    return out
+
+
+def switch_chapter_focus() -> None:
+    """Hand the chapter table over from one module to the next.
+
+    Runs before the rerun that redraws the table, which is what makes the switch
+    safe in both directions: the outgoing module's edits are captured while its
+    widget state still exists, and the incoming module is re-seeded with its
+    stored rows so the editor mounts on current data.
+
+    Re-seeding changes that editor's widget identity, which is exactly what
+    Step 1 warns against for the module table. It is fine here only because it
+    happens in a callback: the new identity and the new data reach the browser
+    in the same render, so there is no rerun in which the client posts against a
+    stale id. Between switches the seed is left alone.
+    """
+    ss = st.session_state
+    prev, new = ss.get("_prev_chapter_focus"), ss.chapter_focus
+    delta = ss.get(chapter_key(prev)) if prev else None
+    if delta and prev in ss.chapter_seed:
+        # Only when there is something pending. `chapters[prev]` already holds
+        # what the editor returned on the last completed rerun, so overwriting
+        # it unconditionally would throw that away on every switch. The delta is
+        # cumulative since the widget mounted, so applying it to the seed
+        # reproduces the editor's current value rather than adding to it.
+        ss.chapters[prev] = apply_editor_delta(ss.chapter_seed[prev], delta)
+    if new is not None:
+        ss.chapter_seed[new] = [dict(r) for r in ss.chapters.get(new, [])]
+        ss.pop(chapter_key(new), None)
+    ss._prev_chapter_focus = new
+
+
+def reset_chapter_editor(name: str, rows: list[dict]) -> None:
+    """Replace a module's chapter rows from outside the editor.
+
+    Both halves are required, and this is the recipe the module table's comment
+    below describes: a new seed alone would leave the old edits stored under the
+    widget key and Streamlit would re-apply them on top.
+    """
+    st.session_state.chapter_seed[name] = [dict(r) for r in rows]
+    st.session_state.chapters[name] = [dict(r) for r in rows]
+    st.session_state.pop(chapter_key(name), None)
+
+
+def add_syllabus(name: str) -> None:
+    """Append a parsed paste to a module's chapters, skipping ones already there.
+
+    A callback rather than a branch after the button, because it has to empty
+    the paste box: session state for a widget cannot be assigned once that
+    widget has been instantiated, and callbacks run before that happens.
+    """
+    ss = st.session_state
+    existing = list(ss.chapters.get(name, []))
+    have = {str(r.get("name") or "").strip().casefold() for r in existing}
+    fresh = [r for r in setup_io.parse_syllabus(ss.get(f"syllabus::{name}") or "")
+             if r["name"].casefold() not in have]
+    if fresh:
+        reset_chapter_editor(name, existing + fresh)
+    ss[f"syllabus::{name}"] = ""
+
+
+def sync_chapter_owners() -> list[str]:
+    """Keep the chapter store aligned with the module table. Returns the names.
+
+    Modules are joined to their chapters by name, so a rename has to carry the
+    chapters (and the selection) across or the student's work would silently
+    detach. Renames are detected by position, since that is the only thing that
+    survives an edit to the name cell itself.
+    """
+    ss = st.session_state
+    names = [str(m.get("name") or "").strip() for m in ss.modules]
+    names = [n for n in names if n]
+    old = ss._module_names
+
+    for i, new in enumerate(names):
+        if i < len(old) and old[i] != new and old[i] not in names:
+            was = old[i]
+            ss.chapter_seed[new] = ss.chapter_seed.pop(was, [])
+            ss.chapters[new] = ss.chapters.pop(was, [])
+            ss.pop(chapter_key(was), None)
+            if ss.get("chapter_focus") == was:
+                ss.chapter_focus = new
+            if ss.get("_prev_chapter_focus") == was:
+                ss._prev_chapter_focus = new
+
+    for name in names:
+        ss.chapter_seed.setdefault(name, [])
+        ss.chapters.setdefault(name, [])
+    for gone in [n for n in ss.chapters if n not in names]:
+        ss.chapter_seed.pop(gone, None)
+        ss.chapters.pop(gone, None)
+        ss.pop(chapter_key(gone), None)
+
+    ss._module_names = names
+    return names
+
+
+def chapters_for(name: str) -> list[Chapter]:
+    """The stored rows for one module as validated Chapters, blanks dropped."""
+    out = []
+    for row in st.session_state.chapters.get(name, []):
+        title = str(row.get("name") or "").strip()
+        if not title:
+            continue
+        confidence = row.get("confidence")
+        out.append(Chapter(
+            name=title,
+            weight=int(row.get("weight") or 3),
+            confidence=int(confidence) if confidence not in (None, "") else None,
+        ))
+    return out
+
+
+def apply_setup(req: PlanRequest) -> None:
+    """Drive every Setup widget from a loaded file, then let the rerun redraw."""
+    ss = st.session_state
+    ss.module_seed = [{"name": m.name, "exam_date": m.exam_date, "difficulty": m.difficulty,
+                       "confidence": m.confidence, "estimated_hours": m.estimated_hours}
+                      for m in req.modules]
+    ss.modules = [dict(m) for m in ss.module_seed]
+    ss.pop("module_editor", None)
+
+    for name in list(ss.chapters):
+        ss.pop(chapter_key(name), None)
+    ss.chapter_seed, ss.chapters = {}, {}
+    for m in req.modules:
+        reset_chapter_editor(m.name, [c.model_dump() for c in m.chapters])
+    ss._module_names = [m.name for m in req.modules]
+    ss.chapter_focus = ss._prev_chapter_focus = req.modules[0].name
+
+    av = req.availability
+    for i in range(7):
+        ss[f"h{i}"] = float(av.hours_per_weekday.get(i, 0.0))
+    ss.plan_start = req.start_date
+    ss.horizon = req.horizon_days
+    ss.min_len = int(av.min_session_minutes)
+    ss.max_len = int(av.max_session_minutes)
+    ss.day_start = av.day_start
+    ss.blackout_raw = ", ".join(d.isoformat() for d in av.blackout_dates)
+    ss.preferences = req.preferences
 
 
 def get_planner():
@@ -411,6 +631,33 @@ with tab_setup:
     # Two required steps first, everything with a working default folded away
     # behind the expander below. The expander body still executes on every rerun,
     # so build_request() sees those values whether or not it was ever opened.
+
+    # Nothing is stored server-side, so a refresh costs the student everything
+    # they typed. The load half has to run before any Setup widget is drawn,
+    # since it writes their session values; the save half needs build_request(),
+    # which is defined further down, so it fills a slot reserved here.
+    with st.container(border=True):
+        io_load, io_save = st.columns(2, vertical_alignment="bottom")
+        with io_load:
+            upload = st.file_uploader("Load setup (JSON)", type=["json"], key="setup_upload")
+            if upload is not None:
+                # The uploader hands the same file back on every rerun, so the
+                # import is keyed to the file's identity and applied once.
+                token = (upload.name, upload.size)
+                if token != st.session_state._setup_token:
+                    st.session_state._setup_token = token
+                    try:
+                        apply_setup(setup_io.setup_from_json(upload.getvalue().decode("utf-8")))
+                    except ValueError as exc:
+                        st.error(f"Could not load that setup: {exc}")
+                    except UnicodeDecodeError:
+                        st.error("Could not load that setup: the file is not UTF-8 text.")
+                    else:
+                        st.rerun()
+            else:
+                st.session_state._setup_token = None
+        save_slot = io_save.container()
+
     with st.container(border=True):
         st.subheader("Step 1 · Your modules")
         st.caption("Three to six modules. Confidence 1 means you have not started, 5 means solid.")
@@ -443,20 +690,96 @@ with tab_setup:
         )
         st.session_state.modules = edited
 
+        # ---- chapters ------------------------------------------------------
+        # Optional throughout: leave every table empty and the request, the
+        # planner and the rule engine behave exactly as they did before this
+        # section existed.
+        st.divider()
+        st.markdown("**Chapters** · optional")
+        st.caption("Splitting a module into chapters turns one hours guess into several, "
+                   "and gives every study block a real topic instead of a generated one. "
+                   "Weight is relative size, not hours: 1 is short, 5 is the monster.")
+
+        module_names = sync_chapter_owners()
+        if not module_names:
+            st.caption("Name a module above to add chapters to it.")
+        else:
+            # A keyed radio outranks any index= argument, so the selection is
+            # corrected in state before the widget renders (same reason as the
+            # backend radio in the sidebar). A radio and not an expander or a
+            # nested tab: both of those reset or collapse on the reruns that
+            # editing a cell triggers, which is exactly the behaviour a table
+            # full of half-typed input must not have.
+            if st.session_state.chapter_focus not in module_names:
+                st.session_state.chapter_focus = module_names[0]
+                st.session_state._prev_chapter_focus = module_names[0]
+            focus = st.radio("Chapters for", module_names, horizontal=True,
+                             key="chapter_focus", on_change=switch_chapter_focus,
+                             label_visibility="collapsed")
+
+            # Fed the frozen seed, never its own output — see the module editor
+            # above for what happens otherwise. The seed only changes in
+            # switch_chapter_focus() and reset_chapter_editor().
+            st.session_state.chapters[focus] = frame_to_rows(st.data_editor(
+                chapter_frame(st.session_state.chapter_seed[focus]),
+                num_rows="dynamic",
+                width="stretch",
+                column_config={
+                    "name": st.column_config.TextColumn("Chapter", required=True),
+                    "weight": st.column_config.NumberColumn(
+                        "Weight", min_value=1, max_value=5, step=1,
+                        help="Relative size. 1 = short, 5 = the monster."),
+                    "confidence": st.column_config.NumberColumn(
+                        "Confidence", min_value=1, max_value=5, step=1,
+                        help="Leave empty to use the module's own confidence."),
+                },
+                key=chapter_key(focus),
+            ))
+
+            # Same idea as the supply/demand line in Step 2: show the
+            # consequence of the numbers immediately, so a wrong weight is
+            # obvious before a plan is ever generated.
+            row = next((m for m in st.session_state.modules if m.get("name") == focus), None)
+            chapters = chapters_for(focus)
+            if chapters and row:
+                try:
+                    split = Module(**{**row, "chapters": chapters}).chapter_minutes()
+                except Exception:  # noqa: BLE001 - incomplete module row, caption is optional
+                    split = {}
+                if split:
+                    st.caption(f"{focus} · {sum(split.values()) / 60:.1f} h over "
+                               f"{len(split)} chapters · "
+                               + " · ".join(f"{n} {m} min" for n, m in split.items()))
+
+            paste_col, add_col = st.columns([4, 1], vertical_alignment="bottom")
+            pasted = paste_col.text_area(
+                "Paste a syllabus", height=80, key=f"syllabus::{focus}",
+                placeholder="1. Descriptive statistics (pp. 1-20)\n2) Probability .......... 21\n"
+                            "Ch. 3 - Distributions",
+                help="Numbering and page numbers are stripped. Deliberately not inside an "
+                     "expander: one that collapses mid-edit is the behaviour this avoids.")
+            found = setup_io.parse_syllabus(pasted or "")
+            add_col.button(f"Add {len(found)}" if found else "Add", width="stretch",
+                           disabled=not found, key=f"add_syllabus::{focus}",
+                           on_click=add_syllabus, args=(focus,))
+
     with st.container(border=True):
         st.subheader("Step 2 · Your week")
         st.caption("Hours you can realistically study on each weekday.")
+        # Every widget from here to the end of the advanced settings is keyed and
+        # takes no value= argument: a keyed widget's session value wins anyway,
+        # and passing both would make loading a setup file a no-op. Defaults are
+        # seeded in init_state().
         hours = {}
         cols = st.columns(7)
-        defaults = [2.0, 2.0, 2.0, 2.0, 1.5, 4.0, 3.0]
         for i, col in enumerate(cols):
             with col:
                 hours[i] = st.number_input(WEEKDAYS[i], min_value=0.0, max_value=12.0,
-                                           value=defaults[i], step=0.5, key=f"h{i}")
+                                           step=0.5, key=f"h{i}")
         st.divider()
         wc1, wc2 = st.columns([1, 2], vertical_alignment="center")
-        start = wc1.date_input("Plan starts", value=date.today())
-        horizon = wc2.slider("Horizon (days)", 10, 14, 14)
+        start = wc1.date_input("Plan starts", key="plan_start")
+        horizon = wc2.slider("Horizon (days)", 10, 14, key="horizon")
 
         # Immediate payoff for filling the two steps in, and it surfaces an
         # over-committed plan before a single API call is spent on it.
@@ -470,29 +793,45 @@ with tab_setup:
 
     with st.expander("⚙ Advanced settings — session length, blackout dates, preferences"):
         cc1, cc2 = st.columns(2)
-        min_len = cc1.number_input("Min session (min)", 20, 90, 30, step=5)
-        max_len = cc2.number_input("Max session (min)", 30, 240, 90, step=15)
-        day_start = st.text_input("Earliest start time", "09:00")
-        blackout_raw = st.text_input("Blackout dates (YYYY-MM-DD, comma separated)", "")
-        preferences = st.text_area(
-            "Preferences and constraints",
-            "Prefer mornings. No study after 21:00. Wednesday evenings are blocked by work.",
-            height=110)
+        min_len = cc1.number_input("Min session (min)", 20, 90, step=5, key="min_len")
+        max_len = cc2.number_input("Max session (min)", 30, 240, step=15, key="max_len")
+        day_start = st.text_input("Earliest start time", key="day_start")
+        blackout_raw = st.text_input("Blackout dates (YYYY-MM-DD, comma separated)",
+                                     key="blackout_raw")
+        preferences = st.text_area("Preferences and constraints", height=110, key="preferences")
 
     blackout = []
     for token in [t.strip() for t in blackout_raw.split(",") if t.strip()]:
         try:
             blackout.append(datetime.strptime(token, "%Y-%m-%d").date())
         except ValueError:
+            # Reported here rather than inside build_request(), which now also
+            # runs quietly for the save button: a typo should be visible as soon
+            # as it is typed, not only once a plan is requested.
             st.warning(f"Ignored blackout date '{token}'.")
 
-    def build_request() -> PlanRequest | None:
+    def build_request(quiet: bool = False) -> PlanRequest | None:
+        """Assemble the request, or None if the input is not usable yet.
+
+        `quiet` suppresses the messages, for callers that only need to know
+        whether a valid request exists right now: the save button is rendered on
+        every rerun and must not narrate the same complaint each time.
+        """
+        fail = (lambda _msg: None) if quiet else st.error
         try:
+            rows = [m for m in st.session_state.modules if m.get("name")]
+            names = [str(m["name"]).strip() for m in rows]
+            if len(set(names)) != len(names):
+                # Chapters hang off the module name, so duplicates would make two
+                # modules share one chapter table.
+                fail("Module names must be unique.")
+                return None
             mods = [Module(**{**m, "exam_date": (m["exam_date"] if isinstance(m["exam_date"], date)
-                                                 else datetime.strptime(str(m["exam_date"]), "%Y-%m-%d").date())})
-                    for m in st.session_state.modules if m.get("name")]
+                                                 else datetime.strptime(str(m["exam_date"]), "%Y-%m-%d").date()),
+                              "chapters": chapters_for(str(m["name"]).strip())})
+                    for m in rows]
             if not 1 <= len(mods) <= 6:
-                st.error("Enter between 1 and 6 modules.")
+                fail("Enter between 1 and 6 modules.")
                 return None
             return PlanRequest(
                 start_date=start,
@@ -505,8 +844,20 @@ with tab_setup:
                 preferences=preferences,
             )
         except Exception as exc:  # noqa: BLE001
-            st.error(f"Invalid input: {exc}")
+            fail(f"Invalid input: {exc}")
             return None
+
+    # Fills the slot reserved at the top of the tab, now that the request can be
+    # built. Inputs only: the generated plan is exported from the Export tab.
+    savable = build_request(quiet=True)
+    with save_slot:
+        st.download_button(
+            "Save setup (JSON)",
+            setup_io.setup_to_json(savable) if savable else "",
+            file_name=f"study-setup-{date.today().isoformat()}.json",
+            mime="application/json", disabled=savable is None, width="stretch")
+        st.caption("Modules, chapters, availability and preferences."
+                   if savable else "Fill in Steps 1 and 2 to save.")
 
     generate = st.button("Generate plan", type="primary", disabled=needs_ack,
                          width="stretch")

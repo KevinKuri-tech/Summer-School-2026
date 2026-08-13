@@ -25,7 +25,7 @@ Without an API key the app runs the deterministic baseline planner, so the UI is
 fully demoable at zero cost.
 
 ```bash
-uv run pytest                       # rule engine tests (10 tests)
+uv run pytest                       # rule engine, chapters and Setup-tab UI (57 tests)
 uv run python check_backend.py      # is the configured backend actually reachable?
 uv run python eval/run_eval.py      # 15 cases, baseline planner, free
 uv run python eval/run_eval.py --live --repair    # same cases against the model
@@ -33,12 +33,23 @@ uv run python eval/run_eval.py --live --repair    # same cases against the model
 
 ## Scope
 
-In: manual input for 1 to 6 modules, AI plan generation in strict JSON, daily and
-weekly view, per-block edit, "I missed this" plus replanning, progress screen,
-CSV / JSON / printable HTML export, evaluation on 15 cases.
+In: manual input for 1 to 6 modules, optional chapters per module (typed or
+pasted from a syllabus), saving and reloading the setup as JSON, AI plan
+generation in strict JSON, daily and weekly view, per-block edit, "I missed
+this" plus replanning, progress screen, CSV / JSON / printable HTML export,
+evaluation on 15 cases.
 
-Out, deliberately: syllabus ingestion, authentication, persistence, mobile app,
-calendar sync, spaced-repetition engine, chatbot.
+Out, deliberately: authentication, a server-side database, mobile app, calendar
+sync, spaced-repetition engine, chatbot.
+
+Chapters were originally out of scope and are now in, for one reason: without
+them `topic` is invented. The system prompt forbids inventing topics while
+supplying none, so the model had no choice, and the baseline planner wrote
+`"Statistics: learn session"`. Chapters make the topic a lookup instead of a
+guess, and therefore checkable — see `unknown_chapter` and `chapter_uncovered`
+below. Reading a syllabus *file* is still out; the paste box is a parser, not an
+ingestion pipeline. Setup files are the same story: a JSON download and upload,
+not a database.
 
 ## Architecture
 
@@ -48,14 +59,56 @@ check_backend.py       Connectivity check: .env -> key -> model -> schema-valid 
 studyplan/schema.py    Pydantic input models + hand-written output JSON schema
 studyplan/prompts.py   System prompt, generation, replanning, repair prompts
 studyplan/planner.py   Backends (Anthropic, OpenRouter) + deterministic baseline
-studyplan/rules.py     Guardrails: 10 checks + auto-repair
+studyplan/rules.py     Guardrails: 12 checks + auto-repair
 studyplan/exporting.py CSV and print-ready HTML
+studyplan/setup_io.py  Setup file save/load + syllabus paste parser
 eval/                  Cases and harness
 ```
 
 One frontend, one thin core, one AI call per action (two if a rule violation
 triggers a repair round). No database: state lives in the Streamlit session and
 is exported as CSV, JSON or HTML.
+
+Two different JSON files, deliberately kept apart. `setup_io.py` writes the
+*input* (a versioned `PlanRequest`) so a refresh is recoverable; `exporting.py`
+writes the *output*. Reusing `PlanRequest` as the file format means there is one
+contract to keep in sync, and validation comes free — `pydantic.ValidationError`
+is a `ValueError`, so a hand-edited file with a 40 day horizon is rejected with
+the field name already in the message.
+
+### The chapter table
+
+Chapters are per module, but there is only ever one table on screen, chosen by a
+radio. That costs some Streamlit footwork, and it is worth writing down because
+all of it is load-bearing.
+
+`st.data_editor` with `num_rows="dynamic"` derives its widget identity from the
+serialized input data. Feed it its own output and the identity changes every
+rerun; the browser then posts each edit against an id that is already stale, the
+server registers a new widget with no pending edits, and the cell snaps back
+until you type it a second time. So both editors are fed a frozen seed
+(`module_seed`, `chapter_seed[module]`) and never their own return value.
+
+Only the focused module's editor is rendered, and Streamlit discards widget state
+for widgets a rerun did not draw. So the rows live in a plain `chapters[module]`
+dict, written from the editor's return value on every rerun, and switching module
+runs an `on_change` callback that re-seeds the incoming editor from it. Re-seeding
+does change that editor's identity, which is exactly what the paragraph above
+warns against — it is safe only because a callback runs *before* the render, so
+the new id and the new data reach the browser together and there is no rerun in
+which the client can post against the old one.
+
+One gap remains: clicking another module while a cell is still focused blurs the
+cell, so the edit and the new selection arrive in the same message and the
+outgoing editor is never re-rendered to hand its value back. The same callback
+therefore folds that editor's still-live delta into `chapters[module]` first —
+but only when a delta is actually present, since `chapters[module]` already holds
+the last returned value and overwriting it unconditionally would discard it.
+
+None of this is theoretical: `tests/test_chapters.py` drives the real app through
+`AppTest` and fails on each of these paths individually if the corresponding
+mechanism is removed. The radio is also not an accident — an expander collapses
+and a nested tab resets on the reruns that editing a cell triggers.
 
 ### The input contract
 
@@ -65,7 +118,12 @@ is exported as CSV, JSON or HTML.
   "modules": [{                                             // 1..6
     "name": "Statistics", "exam_date": "2026-03-14",
     "difficulty": 4, "confidence": 2,                       // 1..5 each
-    "estimated_hours": 14.0
+    "estimated_hours": 14.0,
+    "chapters": [{                                          // optional, 0..40
+      "name": "Regression",
+      "weight": 4,                                          // 1..5, relative size
+      "confidence": 2                                       // 1..5, null = the module's
+    }]
   }],
   "availability": {
     "hours_per_weekday": {"0": 2.0, "...": 0.0, "6": 3.0},  // 0 = Monday
@@ -82,6 +140,15 @@ is exported as CSV, JSON or HTML.
 `preferences` is the only free-text field. It is passed to the model verbatim and
 is *not* enforced by any rule, so it is advisory: the model usually honours it,
 nothing guarantees it.
+
+`chapters` is optional everywhere. Leave it empty and the planner, the prompt and
+the rule engine behave exactly as they did before the field existed. `weight` is
+relative size, never absolute time: `estimated_hours` stays the single source of
+truth for a module's total, and `Module.chapter_minutes()` distributes it by
+`weight * (6 - confidence)` using largest-remainder rounding, so the parts always
+sum to exactly the whole. That is why the two fields can never contradict each
+other, and why a student who has no idea how long a chapter takes can still rank
+them against each other.
 
 ### The AI call
 
@@ -168,7 +235,7 @@ the script thread. After the call the panel is rewritten with what was really se
 ### Guardrails and human-in-the-loop
 
 Schema validity is not correctness. A schema-valid plan can still put a session
-after the exam or overbook a Tuesday. `rules.py` runs 10 checks producing 11
+after the exam or overbook a Tuesday. `rules.py` runs 12 checks producing 13
 violation codes, deterministically, on every plan:
 
 | Code | Severity | Check |
@@ -184,11 +251,20 @@ violation codes, deterministically, on every plan:
 | `past_edit` | error | Replan rewrote a day that already happened |
 | `no_late_revision` | warning | No revision in the last 3 days before the exam |
 | `under_allocated` | warning | Module got under 40 percent of its estimate |
+| `unknown_chapter` | warning | Block topic is not a chapter the student listed |
+| `chapter_uncovered` | warning | A listed chapter got no block at all |
 
 Only errors block; warnings are surfaced and left to the student. Three rules in
 the system prompt are intentionally *not* enforced by the engine — the 15 minute
 gap between blocks, the ~10 percent buffer allowance, and the free-text
 preferences — because they are preferences, not correctness.
+
+The two chapter checks are inert unless at least one module has chapters, so a
+chapterless request is scored exactly as it was before chapters existed. They are
+warnings and never errors on purpose: `errors()` feeds the repair round and
+`autorepair()`, and neither should delete otherwise-legal study time over a
+naming mismatch. Matching is done on a normalised form, so the model re-decorating
+`Distributions` as `Ch. 3 - Distributions` is not reported as off-syllabus.
 
 Failure path, in order:
 
@@ -314,9 +390,12 @@ Difficulty and confidence are self-reported 1–5 integers with no calibration.
 compliance is enforced; allocation quality is not, and is only measured in
 aggregate by the eval harness.
 
-**No persistence.** Everything lives in `st.session_state`. Refreshing the browser
-or restarting the server loses the plan, the progress marks and the token counter.
-Export before you close the tab.
+**No server-side persistence.** Everything lives in `st.session_state`. Refreshing
+the browser or restarting the server loses the plan, the progress marks and the
+token counter. The Setup tab can save and reload its *inputs* as a JSON file,
+which is what makes chapters worth typing in at all, but that is a manual
+download and upload — the generated plan, the progress marks and the token
+counter are not in it. Export before you close the tab.
 
 **Single user, no auth.** No accounts, no multi-tenancy, no server-side storage.
 The API key lives in `.env` on the machine running Streamlit.

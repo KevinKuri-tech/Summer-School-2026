@@ -23,6 +23,11 @@ Hard rules, in order of precedence:
    exam proximity, not equal splits.
 7. Leave roughly 10 percent of total capacity as buffer blocks so missed work
    can be absorbed.
+8. If a module lists chapters, every topic for that module must be one of its
+   chapter names, copied exactly. Cover every chapter at least once if capacity
+   allows, and give more time to chapters with a high weight or a low
+   confidence. A module with no chapters keeps a short descriptive topic of
+   your own wording.
 
 Front-load difficult and low-confidence modules. Put revision close to the exam.
 Keep rationales to one short factual sentence. Do not invent modules, topics
